@@ -572,7 +572,7 @@ export default function RoleAssigner() {
             return (
             <div
               key={p.id}
-              className={`group flex gap-2 ${isInitial ? 'animate-slide-up' : 'animate-pop'}`}
+              className={`group flex gap-2 ${isInitial ? '' : 'animate-pop'}`}
               style={isInitial ? { animationDelay: `${index * 0.03}s` } : undefined}
             >
               <div className="flex-1 relative">
@@ -635,7 +635,7 @@ export default function RoleAssigner() {
             return (
             <div
               key={role.id}
-              className={`group flex gap-2 ${isInitial ? 'animate-slide-up' : 'animate-pop'}`}
+              className={`group flex gap-2 ${isInitial ? '' : 'animate-pop'}`}
               style={isInitial ? { animationDelay: `${index * 0.03}s` } : undefined}
             >
               <div className="flex-1 min-w-0">
