@@ -1,4 +1,4 @@
-import type { ViewState } from '../room';
+import type { ViewState } from './room-view';
 
 interface MenuViewProps {
   onNavigate: (view: ViewState) => void;
