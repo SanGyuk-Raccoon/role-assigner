@@ -581,7 +581,7 @@ export default function RoleAssigner() {
                   value={p.name}
                   onChange={(e) => updateParticipant(p.id, e.target.value)}
                   placeholder={`참가자 ${index + 1}`}
-                  className={`ra-input w-full ${participants.length > 4 ? 'py-2.5 text-sm' : ''}`}
+                  className={`ra-input w-full shadow-inner ${participants.length > 4 ? 'py-2.5 text-sm' : ''}`}
                 />
               </div>
               {participants.length > 2 && (
@@ -600,9 +600,9 @@ export default function RoleAssigner() {
 
         <button
           onClick={addParticipant}
-          className="w-full mt-3 py-3 rounded-xl border-2 border-dashed border-slate-600 text-slate-400 hover:border-pink-500 hover:text-pink-400 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
+          className="w-full mt-3 py-3 rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/50 text-slate-500 hover:border-pink-500/50 hover:text-pink-400 hover:bg-pink-500/5 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
         >
-          <span className="text-lg">➕</span>
+          <span className="text-lg">＋</span>
           참가자 추가
         </button>
       </div>
@@ -644,26 +644,26 @@ export default function RoleAssigner() {
                   value={role.name}
                   onChange={(e) => updateRole(role.id, 'name', e.target.value)}
                   placeholder="역할 이름"
-                  className={`ra-input w-full ${roles.length > 3 ? 'py-2.5 text-sm' : ''}`}
+                  className={`ra-input w-full shadow-inner ${roles.length > 3 ? 'py-2.5 text-sm' : ''}`}
                 />
               </div>
-              <div className="flex items-center gap-0 shrink-0">
+              <div className="flex items-center bg-slate-900 border-2 border-slate-800 rounded-2xl overflow-hidden shrink-0">
                 <button
                   onClick={() => updateRole(role.id, 'count', Math.max(0, role.count - 1))}
-                  className={`rounded-l-xl bg-slate-700 text-white hover:bg-slate-600 transition-colors font-bold ${
+                  className={`bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-bold ${
                     roles.length > 3 ? 'w-8 h-10 text-base' : 'w-10 h-12 text-lg'
                   }`}
                 >
                   −
                 </button>
-                <div className={`bg-slate-800 flex items-center justify-center border-y border-slate-700 ${
+                <div className={`flex items-center justify-center border-x-2 border-slate-800/50 ${
                   roles.length > 3 ? 'w-10 h-10' : 'w-12 h-12'
                 }`}>
                   <span className={`font-bold text-white ${roles.length > 3 ? 'text-base' : 'text-lg'}`}>{role.count}</span>
                 </div>
                 <button
                   onClick={() => updateRole(role.id, 'count', role.count + 1)}
-                  className={`rounded-r-xl bg-slate-700 text-white hover:bg-slate-600 transition-colors font-bold ${
+                  className={`bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-bold ${
                     roles.length > 3 ? 'w-8 h-10 text-base' : 'w-10 h-12 text-lg'
                   }`}
                 >
@@ -691,9 +691,9 @@ export default function RoleAssigner() {
 
         <button
           onClick={addRole}
-          className="w-full mt-3 py-3 rounded-xl border-2 border-dashed border-slate-600 text-slate-400 hover:border-cyan-500 hover:text-cyan-400 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
+          className="w-full mt-3 py-3 rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/50 text-slate-500 hover:border-cyan-500/50 hover:text-cyan-400 hover:bg-cyan-500/5 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
         >
-          <span className="text-lg">➕</span>
+          <span className="text-lg">＋</span>
           역할 추가
         </button>
       </div>
