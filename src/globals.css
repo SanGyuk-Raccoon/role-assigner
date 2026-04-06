@@ -1,3 +1,67 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased selection:bg-cyan-500/30 selection:text-cyan-200;
+  }
+}
+
+@layer components {
+  /* Input Fields */
+  .ra-input {
+    @apply w-full px-5 py-4 bg-slate-900/50 border-2 border-slate-800 rounded-2xl
+           text-white placeholder:text-slate-600 outline-none
+           focus:border-cyan-500/50 focus:ring-4 focus:ring-cyan-500/10
+           hover:border-slate-700 transition-all duration-300;
+  }
+
+  /* Buttons */
+  .ra-btn-primary {
+    @apply relative px-6 py-4 font-black rounded-2xl 
+           bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-lg
+           shadow-lg shadow-cyan-900/20 hover:shadow-cyan-500/30
+           hover:scale-[1.02] active:scale-[0.98] 
+           transition-all duration-300 ease-out 
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
+           flex items-center justify-center gap-2;
+  }
+
+  .ra-btn-secondary {
+    @apply relative px-6 py-4 font-bold rounded-2xl 
+           bg-slate-800 text-slate-200 border-2 border-slate-700
+           hover:bg-slate-700 hover:border-slate-600 
+           active:scale-[0.98] transition-all duration-300 
+           flex items-center justify-center gap-2;
+  }
+
+  /* Animations */
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out forwards;
+    opacity: 0;
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .animate-wiggle {
+    animation: wiggle 0.5s ease-in-out infinite;
+  }
+
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+}

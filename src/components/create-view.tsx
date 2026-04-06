@@ -93,43 +93,43 @@ export function CreateView({
                 placeholder="역할 이름"
                 className="ra-input flex-1"
               />
-              <div className="flex items-center gap-0">
+              <div className="flex items-center bg-slate-800/50 rounded-xl border-2 border-slate-800 overflow-hidden">
                 <button
                   onClick={() => onUpdateRole(role.id, 'count', Math.max(0, role.count - 1))}
-                  className="w-10 h-12 rounded-l-xl bg-slate-700 text-white hover:bg-slate-600 transition-colors font-bold"
+                  className="w-10 h-10 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors font-bold"
                 >
                   −
                 </button>
-                <div className="w-12 h-12 bg-slate-800 flex items-center justify-center border-y border-slate-700">
-                  <span className="font-bold text-white">{role.count}</span>
+                <div className="w-10 h-10 flex items-center justify-center border-x-2 border-slate-800/50">
+                  <span className="font-bold text-white text-sm">{role.count}</span>
                 </div>
                 <button
                   onClick={() => onUpdateRole(role.id, 'count', role.count + 1)}
-                  className="w-10 h-12 rounded-r-xl bg-slate-700 text-white hover:bg-slate-600 transition-colors font-bold"
+                  className="w-10 h-10 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors font-bold"
                 >
                   +
                 </button>
-                <span className="text-xs text-slate-500 w-6 ml-2">명</span>
               </div>
+              <span className="text-xs text-slate-500 w-4 ml-1 self-center">명</span>
               {roles.length > 1 && (
                 <button
                   onClick={() => onRemoveRole(role.id)}
-                  className="w-12 h-12 rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-all flex items-center justify-center"
+                  className="w-10 h-10 rounded-xl bg-red-500/10 text-red-500/50 hover:bg-red-500 hover:text-white transition-all flex items-center justify-center shrink-0"
                 >
                   ✕
                 </button>
               )}
             </div>
           ))}
-          <p className="text-xs text-slate-500 flex items-center gap-2">
-            <span>💡</span>
-            * 0명으로 설정하면 나머지 인원이 해당 역할로 배정됩니다
+          <p className="text-[11px] text-slate-500 flex items-center gap-1.5 px-1">
+            <span className="text-xs text-slate-400">💡</span>
+            0명으로 설정하면 나머지 인원이 해당 역할로 배정됩니다
           </p>
           <button
             onClick={onAddRole}
-            className="w-full py-3 border-2 border-dashed border-slate-600 rounded-xl text-slate-400 hover:border-cyan-500 hover:text-cyan-400 transition-all font-bold flex items-center justify-center gap-2"
+            className="w-full py-3.5 border-2 border-dashed border-slate-800 rounded-2xl text-slate-500 hover:border-cyan-500/50 hover:text-cyan-400 hover:bg-cyan-500/5 transition-all font-bold flex items-center justify-center gap-2"
           >
-            <span>➕</span>
+            <span>＋</span>
             역할 추가
           </button>
         </div>
