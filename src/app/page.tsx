@@ -102,7 +102,10 @@ export default function RoleAssigner() {
     setServerErrorType(null);
 
     try {
-      await checkServerHealth();
+      const isHealthy = await checkServerHealth();
+      if (!isHealthy) {
+        throw new RoomError('CONNECTION_FAILED', 'Failed to connect to multiplayer server');
+      }
       setRevealMode('private');
     } catch (err) {
       if (err instanceof RoomError) {

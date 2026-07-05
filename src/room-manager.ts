@@ -14,7 +14,7 @@ import {
   serverTimestamp,
   type Unsubscribe,
 } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { getFirebaseDatabase, isFirebaseConfigured } from '@/lib/firebase';
 import {
   logNetworkError,
   logRoomError,
@@ -127,6 +127,7 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
 const ROOM_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_PARTICIPANTS = 20;
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
 // State
 let currentRoomCode: string | null = null;
@@ -150,11 +151,15 @@ function generateParticipantId(): string {
 }
 
 function roomRef(code: string) {
-  return ref(database, `role-assigner/${code}`);
+  return ref(getFirebaseDatabase(), `role-assigner/${code}`);
 }
 
 function participantRef(code: string, participantId: string) {
-  return ref(database, `role-assigner/${code}/participants/${participantId}`);
+  return ref(getFirebaseDatabase(), `role-assigner/${code}/participants/${participantId}`);
+}
+
+function appPath(path: string): string {
+  return `${BASE_PATH}${path}`;
 }
 
 function notifyStateListeners(room: Room | null) {
@@ -391,7 +396,7 @@ export async function assignRoles(
   hostId: string
 ): Promise<void> {
   try {
-    const response = await fetch('/api/rooms/assign', {
+    const response = await fetch(appPath('/api/rooms/assign'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomCode: currentRoomCode || roomId, hostId }),
@@ -455,7 +460,7 @@ export async function resetGame(
       updates[`role-assigner/${code}/participants/${pId}/hasViewed`] = null;
     }
 
-    await update(ref(database), updates);
+    await update(ref(getFirebaseDatabase()), updates);
   } catch (error) {
     throw new RoomError('SERVER_ERROR', 'Failed to reset game');
   }
@@ -566,15 +571,19 @@ function cleanup() {
  * Check if Firebase is configured
  */
 export function isMultiplayerConfigured(): boolean {
-  return !!process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+  return isFirebaseConfigured();
 }
 
 /**
  * Check if Firebase is reachable
  */
 export async function checkServerHealth(): Promise<boolean> {
+  if (!isMultiplayerConfigured()) {
+    return false;
+  }
+
   try {
-    const testRef = ref(database, '.info/connected');
+    const testRef = ref(getFirebaseDatabase(), '.info/connected');
     const snapshot = await get(testRef);
     return snapshot.val() === true;
   } catch {
