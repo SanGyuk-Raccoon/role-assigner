@@ -1,197 +1,343 @@
 /**
- * Role assigner utilities for party games
+ * Browser-only role assignment domain logic.
+ *
+ * Every function in this module is deterministic when a RandomIndex function is
+ * supplied. The runtime adapter uses Web Crypto and never falls back to a
+ * non-cryptographic random source.
  */
 
-export interface RoleConfig {
+export const LIMITS = {
+  minParticipants: 2,
+  maxParticipants: 20,
+  maxParticipantCodePoints: 20,
+  maxParticipantBytes: 80,
+  maxRoles: 20,
+  maxRoleCodePoints: 30,
+  maxRoleBytes: 120,
+  maxRoleCount: 20,
+} as const;
+
+export type AssignmentMode = 'role' | 'manito';
+
+export interface ParticipantInput {
+  id: string;
+  name: string;
+}
+
+export interface RoleInput {
   id: string;
   name: string;
   count: number;
-  description: string;
 }
 
-export interface Participant {
-  id: string;
+export interface Assignment {
   name: string;
-  password: string;
-}
-
-export interface AssignedRole {
-  participantName: string;
   role: string;
-  extra?: string;
 }
 
-/**
- * Fisher-Yates shuffle algorithm
- * Produces unbiased random permutation
- */
-export function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+export interface NormalizedRole {
+  name: string;
+  count: number;
+}
+
+export type ValidationField =
+  | 'participants'
+  | 'roles'
+  | `participant:${string}`
+  | `role-name:${string}`
+  | `role-count:${string}`;
+
+export interface ValidationIssue {
+  field: ValidationField;
+  message: string;
+}
+
+export interface SetupValidation {
+  valid: boolean;
+  issues: ValidationIssue[];
+  participants: string[];
+  roles: NormalizedRole[];
+}
+
+export type RandomIndex = (upperExclusive: number) => number;
+
+const textEncoder = new TextEncoder();
+
+export function normalizeDisplayValue(value: string): string {
+  return value.trim().replace(/\s+/gu, ' ');
+}
+
+export function createLookupKey(value: string): string {
+  return normalizeDisplayValue(value).normalize('NFKC').toLowerCase();
+}
+
+export function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+export function utf8ByteLength(value: string): number {
+  return textEncoder.encode(value).byteLength;
+}
+
+function validateBoundedText(
+  value: string,
+  label: string,
+  maxCodePoints: number,
+  maxBytes: number,
+): string | null {
+  if (!value) return `${label}을 입력해주세요.`;
+
+  const points = codePointLength(value);
+  if (points > maxCodePoints) {
+    return `${label}은 ${maxCodePoints}자 이하여야 합니다. 현재 ${points}자입니다.`;
+  }
+
+  const bytes = utf8ByteLength(value);
+  if (bytes > maxBytes) {
+    return `${label}은 UTF-8 ${maxBytes}바이트 이하여야 합니다. 현재 ${bytes}바이트입니다.`;
+  }
+
+  return null;
+}
+
+export function validateSetup(
+  mode: AssignmentMode,
+  participantInputs: ParticipantInput[],
+  roleInputs: RoleInput[],
+): SetupValidation {
+  const issues: ValidationIssue[] = [];
+  const participants = participantInputs.map((participant) => normalizeDisplayValue(participant.name));
+
+  if (participantInputs.length < LIMITS.minParticipants) {
+    issues.push({ field: 'participants', message: '참가자는 최소 2명이 필요합니다.' });
+  }
+  if (participantInputs.length > LIMITS.maxParticipants) {
+    issues.push({ field: 'participants', message: '참가자는 최대 20명까지 입력할 수 있습니다.' });
+  }
+
+  const participantKeys = new Map<string, string>();
+  participantInputs.forEach((participant, index) => {
+    const displayName = participants[index];
+    const textError = validateBoundedText(
+      displayName,
+      '참가자 이름',
+      LIMITS.maxParticipantCodePoints,
+      LIMITS.maxParticipantBytes,
+    );
+
+    if (textError) {
+      issues.push({ field: `participant:${participant.id}`, message: textError });
+      return;
+    }
+
+    const key = createLookupKey(displayName);
+    if (participantKeys.has(key)) {
+      issues.push({
+        field: `participant:${participant.id}`,
+        message: `“${displayName}” 이름이 중복됩니다. 서로 다른 이름을 입력해주세요.`,
+      });
+      return;
+    }
+    participantKeys.set(key, participant.id);
+  });
+
+  const roles: NormalizedRole[] = roleInputs.map((role) => ({
+    name: normalizeDisplayValue(role.name),
+    count: role.count,
+  }));
+
+  if (mode === 'role') {
+    if (roleInputs.length === 0) {
+      issues.push({ field: 'roles', message: '역할을 최소 1개 입력해주세요.' });
+    }
+    if (roleInputs.length > LIMITS.maxRoles) {
+      issues.push({ field: 'roles', message: '역할은 최대 20개까지 입력할 수 있습니다.' });
+    }
+
+    const roleKeys = new Set<string>();
+    roleInputs.forEach((role, index) => {
+      const normalizedRole = roles[index];
+      const textError = validateBoundedText(
+        normalizedRole.name,
+        '역할 이름',
+        LIMITS.maxRoleCodePoints,
+        LIMITS.maxRoleBytes,
+      );
+
+      if (textError) {
+        issues.push({ field: `role-name:${role.id}`, message: textError });
+      } else {
+        const key = createLookupKey(normalizedRole.name);
+        if (roleKeys.has(key)) {
+          issues.push({
+            field: `role-name:${role.id}`,
+            message: `“${normalizedRole.name}” 역할이 중복됩니다.`,
+          });
+        } else {
+          roleKeys.add(key);
+        }
+      }
+
+      if (
+        !Number.isInteger(normalizedRole.count)
+        || normalizedRole.count < 0
+        || normalizedRole.count > LIMITS.maxRoleCount
+      ) {
+        issues.push({
+          field: `role-count:${role.id}`,
+          message: '역할 인원은 0명부터 20명 사이의 정수여야 합니다.',
+        });
+      }
+    });
+
+    const validCounts = roles.every(
+      (role) => Number.isInteger(role.count) && role.count >= 0 && role.count <= LIMITS.maxRoleCount,
+    );
+    if (validCounts) {
+      const remainderRoles = roles.filter((role) => role.count === 0);
+      const fixedCount = roles.reduce((sum, role) => sum + (role.count > 0 ? role.count : 0), 0);
+
+      if (remainderRoles.length > 1) {
+        const remainderIndexes = roles
+          .map((role, index) => (role.count === 0 ? index : -1))
+          .filter((index) => index >= 0);
+        const secondRemainder = roleInputs[remainderIndexes[1]];
+        issues.push({
+          field: secondRemainder ? `role-count:${secondRemainder.id}` : 'roles',
+          message: '0명(나머지) 역할은 하나만 설정할 수 있습니다.',
+        });
+      }
+
+      if (fixedCount > participants.length) {
+        issues.push({ field: 'roles', message: '지정한 역할 인원 합계가 참가자 수보다 많습니다.' });
+      } else if (fixedCount < participants.length && remainderRoles.length === 0) {
+        issues.push({
+          field: 'roles',
+          message: '남은 참가자를 배정하려면 역할 하나를 0명(나머지)으로 설정해주세요.',
+        });
+      }
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+    participants,
+    roles: mode === 'role' ? roles : [],
+  };
+}
+
+export function createRolePool(roles: NormalizedRole[], participantCount: number): string[] {
+  const pool: string[] = [];
+  let remainderRole: string | null = null;
+
+  for (const role of roles) {
+    if (role.count === 0) {
+      remainderRole = role.name;
+      continue;
+    }
+    for (let index = 0; index < role.count; index += 1) {
+      pool.push(role.name);
+    }
+  }
+
+  if (pool.length < participantCount && remainderRole) {
+    while (pool.length < participantCount) pool.push(remainderRole);
+  }
+
+  if (pool.length !== participantCount) {
+    throw new Error('검증되지 않은 역할 구성이 전달되었습니다.');
+  }
+
+  return pool;
+}
+
+function checkedRandomIndex(randomIndex: RandomIndex, upperExclusive: number): number {
+  const value = randomIndex(upperExclusive);
+  if (!Number.isInteger(value) || value < 0 || value >= upperExclusive) {
+    throw new RangeError(`난수 인덱스는 0 이상 ${upperExclusive} 미만이어야 합니다.`);
+  }
+  return value;
+}
+
+export function fisherYates<T>(values: readonly T[], randomIndex: RandomIndex): T[] {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = checkedRandomIndex(randomIndex, index + 1);
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
   return shuffled;
 }
 
-/**
- * Create a role pool from role configurations
- * Roles with count > 0 are added that many times
- * Roles with count = 0 are used to fill remaining spots (randomly distributed)
- */
-export function createRolePool(roles: RoleConfig[], participantCount: number): string[] | null {
-  const rolePool: string[] = [];
+export function sattolo<T>(values: readonly T[], randomIndex: RandomIndex): T[] {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = checkedRandomIndex(randomIndex, index);
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+}
 
-  // Add fixed count roles
-  roles.forEach(role => {
-    if (role.count > 0 && role.name.trim()) {
-      for (let i = 0; i < role.count; i++) {
-        rolePool.push(role.name);
-      }
+export function assign(
+  mode: AssignmentMode,
+  participants: readonly string[],
+  roles: readonly NormalizedRole[],
+  randomIndex: RandomIndex,
+): Assignment[] {
+  if (participants.length < LIMITS.minParticipants || participants.length > LIMITS.maxParticipants) {
+    throw new Error('검증되지 않은 참가자 구성이 전달되었습니다.');
+  }
+
+  if (mode === 'manito') {
+    const targets = sattolo(participants, randomIndex);
+    return participants.map((name, index) => ({ name, role: targets[index] }));
+  }
+
+  const pool = createRolePool([...roles], participants.length);
+  const shuffledRoles = fisherYates(pool, randomIndex);
+  return participants.map((name, index) => ({ name, role: shuffledRoles[index] }));
+}
+
+export function createCryptoRandomIndex(
+  cryptoSource: Pick<Crypto, 'getRandomValues'> | undefined = globalThis.crypto,
+): RandomIndex {
+  if (!cryptoSource || typeof cryptoSource.getRandomValues !== 'function') {
+    throw new Error('이 브라우저는 안전한 역할 섞기를 지원하지 않습니다. 최신 브라우저에서 다시 시도해주세요.');
+  }
+
+  return (upperExclusive: number): number => {
+    if (!Number.isInteger(upperExclusive) || upperExclusive < 1 || upperExclusive > 0x1_0000_0000) {
+      throw new RangeError('난수 범위가 올바르지 않습니다.');
     }
-  });
+    if (upperExclusive === 1) return 0;
 
-  // Find all "remaining" roles (count = 0)
-  const remainingRoles = roles.filter(r => r.count === 0 && r.name.trim());
-  const remainingCount = participantCount - rolePool.length;
+    const range = 0x1_0000_0000;
+    const acceptedLimit = Math.floor(range / upperExclusive) * upperExclusive;
+    const values = new Uint32Array(1);
+    let value: number;
+    do {
+      cryptoSource.getRandomValues(values);
+      value = values[0];
+    } while (value >= acceptedLimit);
 
-  if (remainingCount > 0) {
-    if (remainingRoles.length > 0) {
-      // Randomly distribute remaining participants among "remaining" roles
-      for (let i = 0; i < remainingCount; i++) {
-        const randomIndex = Math.floor(Math.random() * remainingRoles.length);
-        rolePool.push(remainingRoles[randomIndex].name);
-      }
-    } else {
-      // No remaining role defined but we need more roles
-      return null;
-    }
-  } else if (remainingCount < 0) {
-    // More roles defined than participants
-    return null;
-  }
-
-  return rolePool;
+    return value % upperExclusive;
+  };
 }
 
-/**
- * Assign roles to participants for general games (Mafia, Liar, Custom)
- */
-export function assignGeneralRoles(
-  participants: Participant[],
-  roles: RoleConfig[],
-  liarWord?: string
-): AssignedRole[] | null {
-  const validParticipants = participants.filter(p => p.name.trim());
+export function isSingleCycleManito(assignments: readonly Assignment[]): boolean {
+  if (assignments.length < LIMITS.minParticipants) return false;
 
-  if (validParticipants.length < 2) {
-    return null;
+  const indexByName = new Map(assignments.map((assignment, index) => [createLookupKey(assignment.name), index]));
+  const visited = new Set<number>();
+  let current = 0;
+
+  for (let step = 0; step < assignments.length; step += 1) {
+    if (visited.has(current)) return false;
+    visited.add(current);
+    const next = indexByName.get(createLookupKey(assignments[current].role));
+    if (next === undefined || next === current) return false;
+    current = next;
   }
 
-  const rolePool = createRolePool(roles, validParticipants.length);
-  if (!rolePool || rolePool.length !== validParticipants.length) {
-    return null;
-  }
-
-  const shuffledRoles = shuffleArray(rolePool);
-
-  return validParticipants.map((p, i) => ({
-    participantName: p.name,
-    role: shuffledRoles[i],
-    // For Liar game: non-liar players get the word
-    extra: liarWord && shuffledRoles[i] !== '라이어' ? liarWord : undefined,
-  }));
-}
-
-/**
- * Validate role configuration against participant count
- */
-export function validateRoleConfig(roles: RoleConfig[], participantCount: number): {
-  valid: boolean;
-  error?: string;
-} {
-  if (participantCount < 2) {
-    return { valid: false, error: '최소 2명의 참가자가 필요합니다.' };
-  }
-
-  const fixedRoleCount = roles.reduce((sum, r) => sum + (r.count > 0 ? r.count : 0), 0);
-  const hasRemainingRole = roles.some(r => r.count === 0 && r.name.trim());
-
-  if (fixedRoleCount > participantCount) {
-    return { valid: false, error: '역할 수가 참가자 수보다 많습니다.' };
-  }
-
-  if (fixedRoleCount < participantCount && !hasRemainingRole) {
-    return { valid: false, error: '나머지 인원을 채울 역할이 없습니다.' };
-  }
-
-  const hasValidRoles = roles.some(r => r.name.trim());
-  if (!hasValidRoles) {
-    return { valid: false, error: '최소 하나의 역할이 필요합니다.' };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Manito (Secret Santa) assignment result
- */
-export interface ManitoAssignment {
-  giver: string;      // 선물 주는 사람
-  receiver: string;   // 선물 받는 사람 (마니또 대상)
-}
-
-/**
- * Generate a derangement using Sattolo's algorithm
- * Creates a single cycle where no element maps to itself
- * Perfect for Manito/Secret Santa assignments
- *
- * @param array - Array of items to derange
- * @returns Array of indices representing the derangement (array[i] gives to array[result[i]])
- */
-export function generateDerangement<T>(array: T[]): number[] {
-  const n = array.length;
-  if (n < 2) return [];
-
-  // Create index array [0, 1, 2, ..., n-1]
-  const indices = Array.from({ length: n }, (_, i) => i);
-
-  // Sattolo's algorithm: guarantees a single cycle (no fixed points)
-  for (let i = n - 1; i > 0; i--) {
-    // Pick random j from [0, i-1] (NOT including i)
-    const j = Math.floor(Math.random() * i);
-    [indices[i], indices[j]] = [indices[j], indices[i]];
-  }
-
-  return indices;
-}
-
-/**
- * Assign Manito (Secret Santa) roles
- * Each participant is assigned another participant as their "manito target"
- * No one gets themselves
- *
- * @param participantNames - Array of participant names
- * @returns Array of ManitoAssignment or null if less than 2 participants
- */
-export function assignManitoRoles(participantNames: string[]): ManitoAssignment[] | null {
-  const validNames = participantNames.filter(name => name.trim());
-
-  if (validNames.length < 2) {
-    return null;
-  }
-
-  const derangement = generateDerangement(validNames);
-
-  return validNames.map((giver, i) => ({
-    giver,
-    receiver: validNames[derangement[i]],
-  }));
-}
-
-/**
- * Verify that a manito assignment is valid (no self-assignments)
- */
-export function isValidManitoAssignment(assignments: ManitoAssignment[]): boolean {
-  return assignments.every(a => a.giver !== a.receiver);
+  return current === 0 && visited.size === assignments.length;
 }

@@ -1,405 +1,294 @@
-import { test, expect } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { expect, Page, test } from '@playwright/test';
 
-test.describe('Role Assigner - Public Mode', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/ko/role-assigner');
-  });
+async function openSetup(page: Page) {
+  await page.goto('/role-assigner');
+  await expect(page.getByRole('heading', { name: '역할 뽑기', exact: true })).toBeVisible();
+}
 
-  test.describe('Page Load', () => {
-    test('should display main sections', async ({ page }) => {
-      // Header
-      await expect(page.getByText('역할 배정기')).toBeVisible();
+async function assignGeneralRoles(page: Page, names = ['Alice', '철수'], role = '시민') {
+  await openSetup(page);
+  await page.getByLabel('참가자 1', { exact: true }).fill(names[0]);
+  await page.getByLabel('참가자 2', { exact: true }).fill(names[1]);
+  await page.getByLabel('역할 1', { exact: true }).fill(role);
+  await page.getByLabel('인원').fill('0');
+  await page.getByRole('button', { name: '역할 배정하기' }).click();
+  await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+}
 
-      // Participants section
-      await expect(page.getByText('참가자')).toBeVisible();
+async function copyShareLink(page: Page, scope: ReturnType<Page['locator']>): Promise<string> {
+  await scope.getByRole('button', { name: /링크 공유/u }).click();
+  await scope.getByRole('button', { name: '링크 복사' }).click();
+  await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
+  return page.evaluate(() => navigator.clipboard.readText());
+}
 
-      // Roles section
-      await expect(page.getByText('역할 설정')).toBeVisible();
-
-      // Assign button
-      await expect(page.getByText('역할 배정하기')).toBeVisible();
-    });
-
-    test('should have default 2 participants and 1 role', async ({ page }) => {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await expect(participantInputs).toHaveCount(2);
-
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await expect(roleInputs).toHaveCount(1);
-    });
-  });
-
-  test.describe('Participant Management', () => {
-    test('should add participant', async ({ page }) => {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await expect(participantInputs).toHaveCount(2);
-
-      await page.getByText('참가자 추가').click();
-      await expect(participantInputs).toHaveCount(3);
-
-      await page.getByText('참가자 추가').click();
-      await expect(participantInputs).toHaveCount(4);
-    });
-
-    test('should remove participant', async ({ page }) => {
-      // Add third participant first
-      await page.getByText('참가자 추가').click();
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await expect(participantInputs).toHaveCount(3);
-
-      // Remove one
-      const participantSection = page.locator('section').filter({ hasText: '참가자' }).first();
-      await participantSection.locator('button:has-text("✕")').first().click();
-      await expect(participantInputs).toHaveCount(2);
-    });
-
-    test('should not go below minimum 2 participants', async ({ page }) => {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-
-      // Try to remove when only 2 participants
-      const participantSection = page.locator('section').filter({ hasText: '참가자' }).first();
-      const deleteButtons = participantSection.locator('button:has-text("✕")');
-
-      // Delete buttons should be disabled or hidden when at minimum
-      await expect(participantInputs).toHaveCount(2);
-    });
-
-    test('should reset all participants', async ({ page }) => {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-
-      // Fill participant names
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
-
-      // Add one more and fill
-      await page.getByText('참가자 추가').click();
-      await participantInputs.nth(2).fill('민수');
-
-      // Click reset
-      const resetButtons = page.locator('button[title="Reset"]');
-      await resetButtons.first().click();
-
-      // Should reset to 2 empty participants
-      await expect(participantInputs).toHaveCount(2);
-      await expect(participantInputs.nth(0)).toHaveValue('');
-      await expect(participantInputs.nth(1)).toHaveValue('');
+test.describe('브라우저 전용 배정 흐름', () => {
+  test.beforeEach(async ({ context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: 'http://127.0.0.1:3100',
     });
   });
 
-  test.describe('Role Management', () => {
-    test('should add role', async ({ page }) => {
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await expect(roleInputs).toHaveCount(1);
+  test('설정 화면은 20명 제한·글자 안내·마니또 전환을 제공한다', async ({ page }) => {
+    await openSetup(page);
+    await expect(page.getByText('2/20명')).toBeVisible();
+    await expect(page.getByText(/남은 20자 · 0\/80B/u).first()).toBeVisible();
 
-      await page.getByText('역할 추가').click();
-      await expect(roleInputs).toHaveCount(2);
-    });
+    await page.getByRole('radio', { name: /마니또/u }).click();
+    await expect(page.getByRole('heading', { name: '한 사람도 자기 자신을 뽑지 않습니다' })).toBeVisible();
+    await expect(page.getByLabel('역할 1', { exact: true })).toHaveCount(0);
 
-    test('should remove role', async ({ page }) => {
-      // Add second role first
-      await page.getByText('역할 추가').click();
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await expect(roleInputs).toHaveCount(2);
-
-      // Remove last role
-      const roleSection = page.locator('section').filter({ hasText: '역할 설정' });
-      await roleSection.locator('button:has-text("✕")').last().click();
-      await expect(roleInputs).toHaveCount(1);
-    });
-
-    test('should increase role count with + button', async ({ page }) => {
-      // Click + button
-      await page.locator('button:has-text("+")').first().click();
-
-      // Count should be 2 now
-      const countSpan = page.locator('span').filter({ hasText: /^2$/ });
-      await expect(countSpan.first()).toBeVisible();
-    });
-
-    test('should decrease role count with − button', async ({ page }) => {
-      // First increase to 2
-      await page.locator('button:has-text("+")').first().click();
-
-      // Then decrease back to 1
-      await page.locator('button:has-text("−")').first().click();
-
-      const countSpan = page.locator('span').filter({ hasText: /^1$/ });
-      await expect(countSpan.first()).toBeVisible();
-    });
-
-    test('should allow count 0 for remaining role', async ({ page }) => {
-      // Decrease count to 0
-      await page.locator('button:has-text("−")').first().click();
-
-      // Should show "나머지" indicator
-      await expect(page.getByText('나머지')).toBeVisible();
-    });
-
-    test('should reset all roles', async ({ page }) => {
-      // Add and configure roles
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await roleInputs.first().fill('마피아');
-
-      await page.getByText('역할 추가').click();
-      await roleInputs.nth(1).fill('시민');
-
-      // Click reset (second reset button for roles)
-      const resetButtons = page.locator('button[title="Reset"]');
-      await resetButtons.nth(1).click();
-
-      // Should reset to 1 empty role
-      await expect(roleInputs).toHaveCount(1);
-      await expect(roleInputs.first()).toHaveValue('');
-    });
+    await page.getByRole('radio', { name: /일반 역할/u }).click();
+    await expect(page.getByLabel('역할 1', { exact: true })).toBeVisible();
   });
 
-  test.describe('Role Assignment', () => {
-    test('should show shuffle animation and result', async ({ page }) => {
-      // Setup valid configuration
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
+  test('정규화 중복 오류를 입력에 연결하고 첫 오류로 초점을 이동한다', async ({ page }) => {
+    await openSetup(page);
+    await page.getByLabel('참가자 1', { exact: true }).fill('Alice');
+    await page.getByLabel('참가자 2', { exact: true }).fill(' ＡＬＩＣＥ ');
+    await page.getByLabel('역할 1', { exact: true }).fill('시민');
+    await page.getByRole('button', { name: '역할 배정하기' }).click();
 
-      const roleInput = page.locator('input[placeholder="역할 이름"]');
-      await roleInput.fill('시민');
-
-      // Click assign
-      await page.getByText('역할 배정하기').click();
-
-      // Wait for result
-      await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
-
-      // Verify both participants have roles shown
-      await expect(page.getByText('철수')).toBeVisible();
-      await expect(page.getByText('영희')).toBeVisible();
-      await expect(page.getByText('시민')).toBeVisible();
-    });
-
-    test('should handle multiple roles', async ({ page }) => {
-      // Setup 4 participants
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
-
-      await page.getByText('참가자 추가').click();
-      await page.getByText('참가자 추가').click();
-      await participantInputs.nth(2).fill('민수');
-      await participantInputs.nth(3).fill('지영');
-
-      // Setup roles: 1 마피아, 3 시민
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await roleInputs.first().fill('마피아');
-
-      await page.getByText('역할 추가').click();
-      await roleInputs.nth(1).fill('시민');
-      // Increase 시민 count to 3
-      await page.locator('button:has-text("+")').last().click();
-      await page.locator('button:has-text("+")').last().click();
-
-      // Assign
-      await page.getByText('역할 배정하기').click();
-
-      // Wait for result
-      await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
-
-      // All participants should be visible
-      await expect(page.getByText('철수')).toBeVisible();
-      await expect(page.getByText('영희')).toBeVisible();
-      await expect(page.getByText('민수')).toBeVisible();
-      await expect(page.getByText('지영')).toBeVisible();
-    });
-
-    test('should handle remaining role (count=0)', async ({ page }) => {
-      // Setup 3 participants
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
-
-      await page.getByText('참가자 추가').click();
-      await participantInputs.nth(2).fill('민수');
-
-      // Setup roles: 1 마피아, rest are 시민
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await roleInputs.first().fill('마피아');
-
-      await page.getByText('역할 추가').click();
-      await roleInputs.nth(1).fill('시민');
-
-      // Set 시민 count to 0 (remaining)
-      await page.locator('button:has-text("−")').last().click();
-      await expect(page.getByText('나머지')).toBeVisible();
-
-      // Assign
-      await page.getByText('역할 배정하기').click();
-
-      // Wait for result
-      await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
-    });
+    await expect(page.getByText(/이름이 중복됩니다/u)).toBeVisible();
+    await expect(page.getByLabel('참가자 2', { exact: true })).toBeFocused();
+    await expect(page.getByLabel('참가자 2', { exact: true })).toHaveAttribute('aria-invalid', 'true');
   });
 
-  test.describe('Validation Errors', () => {
-    test('should show error when no participants have names', async ({ page }) => {
-      // Don't fill any names, just try to assign
-      const roleInput = page.locator('input[placeholder="역할 이름"]');
-      await roleInput.fill('시민');
+  test('배정 직후 역할은 DOM에 없고 참가자 확인 뒤 다시 제거된다', async ({ page }) => {
+    await assignGeneralRoles(page);
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
 
-      await page.getByText('역할 배정하기').click();
+    const row = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
+    const opener = row.getByRole('button', { name: '결과 보기' });
+    await opener.click();
 
-      // Should show validation error (modal or alert)
-      await expect(page.getByText(/참가자.*2명|최소/)).toBeVisible({ timeout: 3000 });
-    });
+    const dialog = page.getByRole('dialog', { name: 'Alice님의 결과' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('시민', { exact: true })).toHaveCount(0);
+    await dialog.getByRole('button', { name: '역할 확인하기' }).click();
+    await expect(dialog.getByText('시민', { exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: '확인 완료' }).click();
 
-    test('should show error when only 1 participant', async ({ page }) => {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('혼자만');
-      // Leave second empty
-
-      const roleInput = page.locator('input[placeholder="역할 이름"]');
-      await roleInput.fill('시민');
-
-      await page.getByText('역할 배정하기').click();
-
-      // Should show validation error
-      await expect(page.getByText(/참가자.*2명|최소/)).toBeVisible({ timeout: 3000 });
-    });
-
-    test('should show error when roles exceed participants', async ({ page }) => {
-      // 2 participants
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
-
-      // 3 roles
-      const roleInputs = page.locator('input[placeholder="역할 이름"]');
-      await roleInputs.first().fill('마피아');
-      await page.locator('button:has-text("+")').first().click();
-      await page.locator('button:has-text("+")').first().click();
-
-      await page.getByText('역할 배정하기').click();
-
-      // Should show error
-      await expect(page.getByText(/역할.*많|초과|부족/)).toBeVisible({ timeout: 3000 });
-    });
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
+    await expect(opener).toBeFocused();
   });
 
-  test.describe('Result Actions', () => {
-    async function setupAndAssign(page: any) {
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await participantInputs.nth(0).fill('철수');
-      await participantInputs.nth(1).fill('영희');
+  test('전체 결과 확인은 확인 dialog를 거치고 즉시 모두 숨길 수 있다', async ({ page }) => {
+    await assignGeneralRoles(page);
+    await page.getByRole('button', { name: '전체 결과 보기' }).click();
+    const dialog = page.getByRole('dialog', { name: '전체 결과를 공개할까요?' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '전체 결과 공개' }).click();
 
-      const roleInput = page.locator('input[placeholder="역할 이름"]');
-      await roleInput.fill('시민');
+    await expect(page.getByRole('heading', { name: '전체 결과' })).toBeVisible();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
+    await page.getByRole('button', { name: '모두 숨기기' }).first().click();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
+  });
 
-      await page.getByText('역할 배정하기').click();
-      await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
+  test('참가자 dialog는 Escape·초점 복귀를 지원한다', async ({ page }) => {
+    await assignGeneralRoles(page);
+    const opener = page.locator('.ra-participant-result-row').first().getByRole('button', { name: '결과 보기' });
+    await opener.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.locator(':focus')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+
+  test('개인 링크에는 해당 참가자만 있고 새로고침 뒤에도 봉인 상태로 복원된다', async ({ page, context }) => {
+    await assignGeneralRoles(page);
+    const row = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
+    const url = await copyShareLink(page, row);
+
+    const receiver = await context.newPage();
+    await receiver.goto(url);
+    await expect(receiver.getByRole('heading', { name: 'Alice님께 전달된 결과' })).toBeVisible();
+    await expect(receiver.getByText('철수', { exact: true })).toHaveCount(0);
+    await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
+    await receiver.reload();
+    await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
+    await receiver.getByRole('button', { name: '역할 확인하기' }).click();
+    await expect(receiver.getByText('시민', { exact: true })).toBeVisible();
+    await receiver.getByRole('button', { name: '새 역할 뽑기' }).click();
+    await expect(receiver).toHaveURL(/\/role-assigner$/u);
+  });
+
+  test('공용 링크는 목록 없이 NFKC·소문자 정규화한 정확한 이름만 찾는다', async ({ page, context }) => {
+    await assignGeneralRoles(page);
+    const url = await copyShareLink(page, page.locator('.ra-result-actions'));
+
+    const receiver = await context.newPage();
+    await receiver.goto(url);
+    await expect(receiver.getByText('철수', { exact: true })).toHaveCount(0);
+    await receiver.getByLabel('참가자 이름').fill('없는 이름');
+    await receiver.getByRole('button', { name: '내 결과 찾기' }).click();
+    await expect(receiver.getByText('이름을 다시 확인해주세요')).toBeVisible();
+    await expect(receiver.getByLabel('참가자 이름')).toHaveValue('없는 이름');
+
+    await receiver.getByLabel('참가자 이름').fill(' ＡＬＩＣＥ ');
+    await receiver.getByRole('button', { name: '내 결과 찾기' }).click();
+    await expect(receiver.getByText('Alice님', { exact: true })).toBeVisible();
+    await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
+    await receiver.getByRole('button', { name: '역할 확인하기' }).click();
+    await expect(receiver.getByText('시민', { exact: true })).toBeVisible();
+  });
+
+  test('마니또는 역할 입력 없이 자기 자신이 아닌 결과를 봉인해 배정한다', async ({ page }) => {
+    await openSetup(page);
+    await page.getByLabel('참가자 1', { exact: true }).fill('A');
+    await page.getByLabel('참가자 2', { exact: true }).fill('B');
+    await page.getByRole('radio', { name: /마니또/u }).click();
+    await page.getByRole('button', { name: '마니또 배정하기' }).click();
+    await expect(page.getByRole('heading', { name: '마니또 배정이 끝났습니다' })).toBeVisible();
+
+    const row = page.locator('.ra-participant-result-row').filter({ hasText: 'A' });
+    await row.getByRole('button', { name: '결과 보기' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('B', { exact: true })).toHaveCount(0);
+    await dialog.getByRole('button', { name: '마니또 확인하기' }).click();
+    await expect(dialog.getByText('B', { exact: true })).toBeVisible();
+  });
+
+  test('배정 과정에서 API·데이터베이스 요청을 보내지 않는다', async ({ page }) => {
+    const roleDataRequests: string[] = [];
+    let monitoring = false;
+    page.on('request', (request) => {
+      if (!monitoring) return;
+      if (['fetch', 'xhr'].includes(request.resourceType())) roleDataRequests.push(request.url());
+    });
+
+    await openSetup(page);
+    monitoring = true;
+    await page.getByLabel('참가자 1', { exact: true }).fill('A');
+    await page.getByLabel('참가자 2', { exact: true }).fill('B');
+    await page.getByLabel('역할 1', { exact: true }).fill('시민');
+    await page.getByRole('button', { name: '역할 배정하기' }).click();
+    await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+    expect(roleDataRequests).toEqual([]);
+  });
+
+  test('공유 취소는 오류나 자동 복사로 바꾸지 않는다', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: () => Promise.reject(new DOMException('cancelled', 'AbortError')),
+      });
+    });
+    await assignGeneralRoles(page);
+    const scope = page.locator('.ra-result-actions');
+    await scope.getByRole('button', { name: '공용 링크 공유' }).click();
+    await expect(scope.getByRole('button', { name: '링크 복사' })).toHaveCount(0);
+    await expect(scope.getByText(/실패|오류|권한/u)).toHaveCount(0);
+  });
+
+  test('시스템 공유 성공을 참가자 행과 섞이지 않는 상태로 알린다', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: () => Promise.resolve(),
+      });
+    });
+    await assignGeneralRoles(page);
+    const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
+    const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });
+    await aliceRow.getByRole('button', { name: '개인 링크 공유' }).click();
+    await expect(aliceRow.getByText('공유를 완료했습니다.')).toBeVisible();
+    await expect(otherRow.getByText('공유를 완료했습니다.')).toHaveCount(0);
+  });
+
+  test('공유·클립보드 실패 시 전체 링크를 선택해 수동 복사할 수 있다', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: () => Promise.reject(new DOMException('denied', 'NotAllowedError')),
+      });
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) },
+      });
+    });
+    await assignGeneralRoles(page);
+    const scope = page.locator('.ra-result-actions');
+    await scope.getByRole('button', { name: '공용 링크 공유' }).click();
+    await expect(scope.getByText(/공유 권한/u)).toBeVisible();
+    await scope.getByRole('button', { name: '링크 복사' }).click();
+    const manual = scope.getByLabel('직접 복사할 전체 링크');
+    await expect(manual).toBeVisible();
+    await expect(manual).toHaveAttribute('readonly', '');
+    await expect(manual).toBeFocused();
+    await expect(manual).toHaveValue(/#result=/u);
+  });
+
+  test('손상·버전·길이 오류를 구분하고 payload는 표시하지 않는다', async ({ page }) => {
+    await page.goto('/role-assigner#result=a');
+    await expect(page.getByRole('heading', { name: '손상된 링크입니다' })).toBeVisible();
+
+    const unsupported = Buffer.from(JSON.stringify({
+      v: 2,
+      kind: 'personal',
+      mode: 'role',
+      assignment: { name: 'A', role: 'B' },
+    })).toString('base64url');
+    await page.goto(`/role-assigner#result=${unsupported}`);
+    await expect(page.getByRole('heading', { name: '지원하지 않는 링크입니다' })).toBeVisible();
+
+    await page.goto(`/role-assigner#result=${'A'.repeat(8_193)}`);
+    await expect(page.getByRole('heading', { name: '너무 긴 링크입니다' })).toBeVisible();
+    await expect(page.getByText('A'.repeat(100))).toHaveCount(0);
+  });
+
+  test('새 게임 뒤 만든 링크와 이전 링크가 각자의 결과를 계속 보여준다', async ({ page, context }) => {
+    await assignGeneralRoles(page, ['Alice', '철수'], '이전 역할');
+    const oldUrl = await copyShareLink(page, page.locator('.ra-result-actions'));
+
+    await page.getByRole('button', { name: '다시 배정' }).click();
+    await expect(page.getByRole('dialog')).toContainText('이전 결과를 계속 보여줍니다');
+    await page.getByRole('dialog').getByRole('button', { name: '취소' }).click();
+
+    await page.getByRole('button', { name: '새 게임' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '새 게임 시작' }).click();
+    await page.getByLabel('참가자 1', { exact: true }).fill('Alice');
+    await page.getByLabel('참가자 2', { exact: true }).fill('철수');
+    await page.getByLabel('역할 1', { exact: true }).fill('새 역할');
+    await page.getByRole('button', { name: '역할 배정하기' }).click();
+    await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+    const newUrl = await copyShareLink(page, page.locator('.ra-result-actions'));
+    expect(newUrl).not.toBe(oldUrl);
+
+    for (const [url, expectedRole] of [[oldUrl, '이전 역할'], [newUrl, '새 역할']] as const) {
+      const receiver = await context.newPage();
+      await receiver.goto(url);
+      await receiver.getByLabel('참가자 이름').fill('Alice');
+      await receiver.getByRole('button', { name: '내 결과 찾기' }).click();
+      await receiver.getByRole('button', { name: '역할 확인하기' }).click();
+      await expect(receiver.getByText(expectedRole, { exact: true })).toBeVisible();
+      await receiver.close();
     }
-
-    test('should reassign roles', async ({ page }) => {
-      await setupAndAssign(page);
-
-      // Click reassign
-      await page.getByText('다시 섞기').click();
-
-      // Should show shuffle again and result
-      await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
-    });
-
-    test('should start new game', async ({ page }) => {
-      await setupAndAssign(page);
-
-      // Click new game
-      await page.getByText('새 게임').click();
-
-      // Should go back to setup view
-      await expect(page.getByText('참가자')).toBeVisible();
-      await expect(page.getByText('역할 설정')).toBeVisible();
-
-      // Participants should be reset
-      const participantInputs = page.locator('input[placeholder^="참가자"]');
-      await expect(participantInputs.nth(0)).toHaveValue('');
-    });
-
-    test('should copy result to clipboard', async ({ page, context }) => {
-      // Grant clipboard permissions
-      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-
-      await setupAndAssign(page);
-
-      // Click share/copy button
-      await page.getByText('결과 복사').click();
-
-      // Check clipboard contains result
-      const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-      expect(clipboardText).toContain('철수');
-      expect(clipboardText).toContain('영희');
-      expect(clipboardText).toContain('시민');
-    });
-  });
-});
-
-test.describe('Role Assigner - English Locale', () => {
-  test('should display in English', async ({ page }) => {
-    await page.goto('/en/role-assigner');
-
-    // Check English text
-    await expect(page.getByText('Role Assigner')).toBeVisible();
-    await expect(page.getByText('Participants')).toBeVisible();
-    await expect(page.getByText('Role Settings')).toBeVisible();
   });
 
-  test('should complete role assignment flow in English', async ({ page }) => {
-    await page.goto('/en/role-assigner');
+  test('320px 화면에서 가로 스크롤이 없고 주요 화면에 자동 접근성 위반이 없다', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 760 });
+    await openSetup(page);
+    const setupOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(setupOverflow).toBeLessThanOrEqual(0);
+    const setupA11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(setupA11y.violations).toEqual([]);
 
-    const participantInputs = page.locator('input[placeholder^="Participant"]');
-    await participantInputs.nth(0).fill('Alice');
-    await participantInputs.nth(1).fill('Bob');
-
-    const roleInput = page.locator('input[placeholder="Role name"]');
-    await roleInput.fill('Citizen');
-
-    await page.getByText('Assign Roles').click();
-
-    await expect(page.getByText('Role Assignment Complete!')).toBeVisible({ timeout: 5000 });
-  });
-});
-
-test.describe('Role Assigner - Mobile', () => {
-  test.use({ viewport: { width: 375, height: 667 } });
-
-  test('should be usable on mobile viewport', async ({ page }) => {
-    await page.goto('/ko/role-assigner');
-
-    // All main elements should be visible
-    await expect(page.getByText('참가자')).toBeVisible();
-    await expect(page.getByText('역할 설정')).toBeVisible();
-    await expect(page.getByText('역할 배정하기')).toBeVisible();
-
-    // Should be able to complete assignment
-    const participantInputs = page.locator('input[placeholder^="참가자"]');
-    await participantInputs.nth(0).fill('철수');
-    await participantInputs.nth(1).fill('영희');
-
-    const roleInput = page.locator('input[placeholder="역할 이름"]');
-    await roleInput.fill('시민');
-
-    await page.getByText('역할 배정하기').click();
-
-    await expect(page.getByText('역할 배정 완료!')).toBeVisible({ timeout: 5000 });
-  });
-});
-
-test.describe('Role Assigner - Presets', () => {
-  test('should load Mafia preset', async ({ page }) => {
-    await page.goto('/ko/role-assigner');
-
-    // Click preset button (if exists)
-    const mafiaPreset = page.getByText('마피아');
-    if (await mafiaPreset.isVisible()) {
-      await mafiaPreset.click();
-
-      // Should have mafia roles configured
-      await expect(page.locator('input[value="마피아"]')).toBeVisible();
-    }
+    await page.getByLabel('참가자 1', { exact: true }).fill('긴 한글 이름 참가자');
+    await page.getByLabel('참가자 2', { exact: true }).fill('مرحبا');
+    await page.getByLabel('역할 1', { exact: true }).fill('아주 긴 역할 이름도 줄바꿈');
+    await page.getByRole('button', { name: '역할 배정하기' }).click();
+    await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+    const resultOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(resultOverflow).toBeLessThanOrEqual(0);
+    const resultA11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(resultA11y.violations).toEqual([]);
   });
 });
