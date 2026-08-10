@@ -43,6 +43,8 @@ type ViewState =
   | 'shared-link'
   | 'invalid-link';
 
+type RevealMode = 'public' | 'individual';
+
 type Confirmation = 'reassign' | 'new-game' | null;
 
 interface ParticipantDraft extends ParticipantInput {}
@@ -137,6 +139,7 @@ function LinkPageFrame({ children }: { children: React.ReactNode }) {
 export default function RoleAssigner() {
   const [viewState, setViewState] = useState<ViewState>('setup');
   const [hashChecked, setHashChecked] = useState(false);
+  const [revealMode, setRevealMode] = useState<RevealMode>('public');
   const [mode, setMode] = useState<AssignmentMode>('role');
   const [participants, setParticipants] = useState<ParticipantDraft[]>(initialParticipants);
   const [roles, setRoles] = useState<RoleDraft[]>(initialRoles);
@@ -338,6 +341,7 @@ export default function RoleAssigner() {
   const resetSetup = useCallback(() => {
     if (shuffleTimerRef.current !== null) window.clearTimeout(shuffleTimerRef.current);
     shuffleTimerRef.current = null;
+    setRevealMode('public');
     setMode('role');
     setParticipants(initialParticipants());
     setRoles(initialRoles());
@@ -588,6 +592,85 @@ export default function RoleAssigner() {
 
   if (viewState === 'results') {
     const label = resultLabel(mode);
+
+    if (revealMode === 'public') {
+      return (
+        <div className="ra-page-shell">
+          <header className="ra-public-results-header">
+            <span className="ra-celebration-mark animate-bounce-in" aria-hidden="true">🎉</span>
+            <h1 className="mt-4 text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">
+              {label} 배정이 끝났습니다
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              전체 공개를 선택해 모든 결과를 한 화면에 표시합니다.
+            </p>
+          </header>
+
+          <div className="ra-memory-warning" role="note">
+            <span aria-hidden="true">⌛</span>
+            <p>
+              전체 결과는 이 브라우저 메모리에만 있습니다. 새로고침하거나 페이지를 떠나면 복구할 수 없습니다.
+            </p>
+          </div>
+
+          <section className="ra-public-results-grid" aria-label="전체 결과">
+            {assignments.map((assignment) => (
+              <article key={createLookupKey(assignment.name)} className="ra-public-result-card animate-reveal">
+                <div className="ra-public-result-identity">
+                  <span className="ra-avatar" aria-hidden="true">
+                    {[...assignment.name][0]?.toUpperCase() ?? '?'}
+                  </span>
+                  <h2 className="min-w-0 break-words font-bold text-white">{assignment.name}</h2>
+                </div>
+                <p className="ra-public-result-role">
+                  <span className="sr-only">{label}: </span>
+                  <span>{assignment.role}</span>
+                </p>
+              </article>
+            ))}
+          </section>
+
+          <div className="ra-public-share">
+            <ShareControl
+              url={shareLinks.shared.url}
+              disabledReason={shareLinks.shared.error}
+              label="공용 링크 공유"
+              shareTitle={`${label} 배정 공용 결과`}
+            />
+          </div>
+
+          <PrivacyNotice shared />
+
+          <div className="ra-bottom-actions">
+            <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary">
+              새 게임
+            </button>
+            <button type="button" onClick={() => setConfirmation('reassign')} className="ra-btn-primary">
+              다시 배정
+            </button>
+          </div>
+
+          <AccessibleDialog
+            open={confirmation !== null}
+            onClose={() => setConfirmation(null)}
+            title={confirmation === 'reassign' ? '결과를 다시 배정할까요?' : '새 게임을 시작할까요?'}
+            description="이미 복사하거나 공유한 링크는 취소되지 않으며, 이전 결과를 계속 보여줍니다."
+          >
+            <div className="ra-dialog-actions">
+              <button type="button" onClick={() => setConfirmation(null)} className="ra-btn-secondary">취소</button>
+              <button
+                type="button"
+                onClick={confirmation === 'reassign' ? confirmReassign : resetSetup}
+                className="ra-btn-primary"
+              >
+                {confirmation === 'reassign' ? '다시 배정' : '새 게임 시작'}
+              </button>
+            </div>
+          </AccessibleDialog>
+        </div>
+      );
+    }
+
     return (
       <div className="ra-page-shell">
         <header className="ra-results-header">
@@ -794,16 +877,44 @@ export default function RoleAssigner() {
   return (
     <div className="ra-page-shell">
       <header className="ra-hero">
-        <div className="ra-hero-mark" aria-hidden="true">🎭</div>
-        <div>
-          <h1 className="text-4xl font-black tracking-[-0.03em] text-white sm:text-5xl">역할 뽑기</h1>
-          <p className="mt-3 max-w-xl text-base leading-7 text-slate-300">
-            참가자와 역할을 입력하면 이 브라우저 안에서 바로 섞습니다. 결과는 한 명씩 보여주거나 링크로 나눌 수 있어요.
-          </p>
-        </div>
+        <h1 className="text-4xl font-black sm:text-5xl">
+          <span className="mr-2" aria-hidden="true">🎭</span>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
+            역할 뽑기
+          </span>
+        </h1>
+        <p className="mt-2 text-sm text-slate-400 sm:text-base">
+          참가자와 역할을 입력하고 원하는 공개 방법을 선택하세요.
+        </p>
       </header>
 
-      <form onSubmit={handleAssign} noValidate className="mt-10">
+      <div className="ra-reveal-switch" role="radiogroup" aria-label="공개 방식">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={revealMode === 'public'}
+          onClick={() => setRevealMode('public')}
+          className={revealMode === 'public' ? 'ra-reveal-option ra-reveal-option-active' : 'ra-reveal-option'}
+        >
+          전체 공개
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={revealMode === 'individual'}
+          onClick={() => setRevealMode('individual')}
+          className={revealMode === 'individual' ? 'ra-reveal-option ra-reveal-option-active' : 'ra-reveal-option'}
+        >
+          개별 공개
+        </button>
+      </div>
+      <p className="ra-reveal-help" aria-live="polite">
+        {revealMode === 'public'
+          ? '배정이 끝나면 모든 결과를 한 화면에 바로 표시합니다.'
+          : '서버 연결 없이 배정하고, 모든 결과를 숨긴 상태에서 한 명씩 확인합니다.'}
+      </p>
+
+      <form onSubmit={handleAssign} noValidate className="mt-8">
         <fieldset
           ref={setFieldRef('participants')}
           tabIndex={-1}
@@ -1098,12 +1209,12 @@ export default function RoleAssigner() {
       <section className="ra-guide" aria-labelledby="guide-title">
         <div>
           <p className="ra-section-kicker">어떻게 공개하나요?</p>
-          <h2 id="guide-title" className="mt-1 text-xl font-black text-white">배정 뒤에 원하는 방법을 고릅니다</h2>
+          <h2 id="guide-title" className="mt-1 text-xl font-black text-white">선택한 방식으로 결과를 보여줍니다</h2>
         </div>
         <ol className="ra-guide-steps">
-          <li><strong>같은 기기</strong><span>전체를 확인하거나 폰을 한 명씩 건넵니다.</span></li>
-          <li><strong>개인 링크</strong><span>한 참가자의 결과 하나만 담아 보냅니다.</span></li>
-          <li><strong>공용 링크</strong><span>전체 결과를 담고 각자 이름으로 찾습니다.</span></li>
+          <li><strong>전체 공개</strong><span>배정 직후 한 화면에서 모든 결과를 확인합니다.</span></li>
+          <li><strong>개별 공개</strong><span>같은 기기에서 결과를 숨기고 한 명씩 확인합니다.</span></li>
+          <li><strong>결과 링크</strong><span>개인 링크나 공용 링크로 다른 기기에 전달합니다.</span></li>
         </ol>
         <p className="text-sm leading-6 text-slate-300">
           결과는 서버나 데이터베이스에 저장하지 않습니다. 링크는 암호화되지 않으며, 이미 보낸 링크는 다시 배정해도 만료되거나 바뀌지 않습니다.

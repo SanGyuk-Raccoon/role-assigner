@@ -6,8 +6,16 @@ async function openSetup(page: Page) {
   await expect(page.getByRole('heading', { name: '역할 뽑기', exact: true })).toBeVisible();
 }
 
-async function assignGeneralRoles(page: Page, names = ['Alice', '철수'], role = '시민') {
+async function assignGeneralRoles(
+  page: Page,
+  names = ['Alice', '철수'],
+  role = '시민',
+  revealMode: 'public' | 'individual' = 'individual',
+) {
   await openSetup(page);
+  await page.getByRole('radio', {
+    name: revealMode === 'public' ? '전체 공개' : '개별 공개',
+  }).click();
   await page.getByLabel('참가자 1', { exact: true }).fill(names[0]);
   await page.getByLabel('참가자 2', { exact: true }).fill(names[1]);
   await page.getByLabel('역할 1', { exact: true }).fill(role);
@@ -32,6 +40,8 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
   test('설정 화면은 20명 제한·글자 안내·마니또 전환을 제공한다', async ({ page }) => {
     await openSetup(page);
+    await expect(page.getByRole('radio', { name: '전체 공개' })).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('radio', { name: '개별 공개' })).toBeVisible();
     await expect(page.getByText('2/20명')).toBeVisible();
     await expect(page.getByText(/남은 20자 · 0\/80B/u).first()).toBeVisible();
 
@@ -41,6 +51,13 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
     await page.getByRole('radio', { name: /일반 역할/u }).click();
     await expect(page.getByLabel('역할 1', { exact: true })).toBeVisible();
+  });
+
+  test('전체 공개는 배정 직후 모든 결과를 기존 카드 흐름으로 표시한다', async ({ page }) => {
+    await assignGeneralRoles(page, ['Alice', '철수'], '시민', 'public');
+    await expect(page.locator('.ra-public-results-grid')).toBeVisible();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
+    await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
   });
 
   test('정규화 중복 오류를 입력에 연결하고 첫 오류로 초점을 이동한다', async ({ page }) => {
@@ -139,6 +156,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
   test('마니또는 역할 입력 없이 자기 자신이 아닌 결과를 봉인해 배정한다', async ({ page }) => {
     await openSetup(page);
+    await page.getByRole('radio', { name: '개별 공개' }).click();
     await page.getByLabel('참가자 1', { exact: true }).fill('A');
     await page.getByLabel('참가자 2', { exact: true }).fill('B');
     await page.getByRole('radio', { name: /마니또/u }).click();
@@ -163,6 +181,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
     await openSetup(page);
     monitoring = true;
+    await page.getByRole('radio', { name: '개별 공개' }).click();
     await page.getByLabel('참가자 1', { exact: true }).fill('A');
     await page.getByLabel('참가자 2', { exact: true }).fill('B');
     await page.getByLabel('역할 1', { exact: true }).fill('시민');
@@ -254,6 +273,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
     await page.getByRole('button', { name: '새 게임' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '새 게임 시작' }).click();
+    await page.getByRole('radio', { name: '개별 공개' }).click();
     await page.getByLabel('참가자 1', { exact: true }).fill('Alice');
     await page.getByLabel('참가자 2', { exact: true }).fill('철수');
     await page.getByLabel('역할 1', { exact: true }).fill('새 역할');
@@ -281,6 +301,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     const setupA11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(setupA11y.violations).toEqual([]);
 
+    await page.getByRole('radio', { name: '개별 공개' }).click();
     await page.getByLabel('참가자 1', { exact: true }).fill('긴 한글 이름 참가자');
     await page.getByLabel('참가자 2', { exact: true }).fill('مرحبا');
     await page.getByLabel('역할 1', { exact: true }).fill('아주 긴 역할 이름도 줄바꿈');
