@@ -79,6 +79,37 @@ export function utf8ByteLength(value: string): number {
   return textEncoder.encode(value).byteLength;
 }
 
+export interface LimitedDisplayInput {
+  value: string;
+  exceeded: boolean;
+}
+
+export function limitDisplayInput(
+  value: string,
+  maxCodePoints: number,
+  maxBytes: number,
+): LimitedDisplayInput {
+  const normalized = normalizeDisplayValue(value);
+  if (
+    codePointLength(normalized) <= maxCodePoints
+    && utf8ByteLength(normalized) <= maxBytes
+  ) {
+    return { value, exceeded: false };
+  }
+
+  const accepted: string[] = [];
+  let acceptedBytes = 0;
+
+  for (const point of normalized) {
+    const pointBytes = utf8ByteLength(point);
+    if (accepted.length >= maxCodePoints || acceptedBytes + pointBytes > maxBytes) break;
+    accepted.push(point);
+    acceptedBytes += pointBytes;
+  }
+
+  return { value: accepted.join(''), exceeded: true };
+}
+
 function validateBoundedText(
   value: string,
   label: string,

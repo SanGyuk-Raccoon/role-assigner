@@ -11,6 +11,7 @@ import {
   createRolePool,
   fisherYates,
   isSingleCycleManito,
+  limitDisplayInput,
   normalizeDisplayValue,
   sattolo,
   utf8ByteLength,
@@ -38,6 +39,24 @@ describe('문자열 정규화와 제한', () => {
   it('Unicode code point와 UTF-8 바이트를 각각 센다', () => {
     expect(codePointLength('가😀')).toBe(2);
     expect(utf8ByteLength('가😀')).toBe(7);
+  });
+
+  it('상한 안에서는 입력 중인 공백을 그대로 보존한다', () => {
+    expect(limitDisplayInput('  김 철수  ', 20, 80)).toEqual({
+      value: '  김 철수  ',
+      exceeded: false,
+    });
+  });
+
+  it('초과 입력은 정규화한 Unicode·UTF-8 유효 접두사까지만 반환한다', () => {
+    expect(limitDisplayInput(`  ${'😀'.repeat(21)}  `, 20, 80)).toEqual({
+      value: '😀'.repeat(20),
+      exceeded: true,
+    });
+    expect(limitDisplayInput('가😀A', 3, 6)).toEqual({
+      value: '가',
+      exceeded: true,
+    });
   });
 
   it('참가자 이름 20 code point·80바이트 경계를 허용하고 초과를 거부한다', () => {

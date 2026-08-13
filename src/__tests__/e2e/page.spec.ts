@@ -38,12 +38,12 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
   });
 
-  test('설정 화면은 20명 제한·글자 안내·마니또 전환을 제공한다', async ({ page }) => {
+  test('설정 화면은 20명 제한·마니또 전환을 제공하고 상시 글자 수를 숨긴다', async ({ page }) => {
     await openSetup(page);
     await expect(page.getByRole('radio', { name: '전체 공개' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('radio', { name: '개별 공개' })).toBeVisible();
     await expect(page.getByText('2/20명')).toBeVisible();
-    await expect(page.getByText(/남은 20자 · 0\/80B/u).first()).toBeVisible();
+    await expect(page.getByText(/남은 \d+자|\d+\/80B/u)).toHaveCount(0);
 
     await page.getByRole('radio', { name: /마니또/u }).click();
     await expect(page.getByRole('heading', { name: '한 사람도 자기 자신을 뽑지 않습니다' })).toBeVisible();
@@ -51,6 +51,69 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
     await page.getByRole('radio', { name: /일반 역할/u }).click();
     await expect(page.getByLabel('역할 1', { exact: true })).toBeVisible();
+  });
+
+  test('이름 상한은 초과분만 막고 반복 경고를 다시 시작한다', async ({ page }) => {
+    await openSetup(page);
+    const participantRow = page.locator('.ra-input-row').first();
+    const participantInput = page.getByLabel('참가자 1', { exact: true });
+    const participantLimit = '😀'.repeat(20);
+
+    await participantInput.fill(participantLimit);
+    await expect(participantInput).toHaveValue(participantLimit);
+    await expect(participantRow.getByRole('status')).toHaveCount(0);
+
+    await participantInput.press('A');
+    await expect(participantInput).toHaveValue(participantLimit);
+    await expect(participantRow.getByRole('status')).toHaveText('최대 20자까지 입력할 수 있어요.');
+    const firstWarningClass = await participantInput.getAttribute('class');
+
+    await participantInput.press('B');
+    await expect.poll(() => participantInput.getAttribute('class')).not.toBe(firstWarningClass);
+    await expect(participantRow.getByRole('status')).toHaveCount(1);
+
+    await participantInput.fill('가'.repeat(25));
+    await expect(participantInput).toHaveValue('가'.repeat(20));
+    await expect(participantRow.getByRole('status')).toHaveCount(1);
+
+    const roleRow = page.locator('.ra-role-row').first();
+    const roleInput = page.getByLabel('역할 1', { exact: true });
+    await roleInput.fill('역'.repeat(31));
+    await expect(roleInput).toHaveValue('역'.repeat(30));
+    await expect(roleRow.getByRole('status')).toHaveText('최대 30자까지 입력할 수 있어요.');
+    await expect(roleRow.getByRole('status')).toHaveCount(0, { timeout: 2_500 });
+  });
+
+  test('한글 조합 완료 후 제한하고 reduced-motion에서는 흔들림을 생략한다', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openSetup(page);
+    const participantRow = page.locator('.ra-input-row').first();
+    const participantInput = page.getByLabel('참가자 1', { exact: true });
+    const composingValue = '가'.repeat(21);
+    await participantInput.focus();
+
+    await participantInput.evaluate((element, value) => {
+      element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(element, value);
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: '가',
+        inputType: 'insertCompositionText',
+        isComposing: true,
+      }));
+    }, composingValue);
+
+    await expect(participantInput).toHaveValue(composingValue);
+    await participantInput.evaluate((element) => {
+      element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '가' }));
+    });
+
+    await expect(participantInput).toHaveValue('가'.repeat(20));
+    await expect(participantRow.getByRole('status')).toHaveText('최대 20자까지 입력할 수 있어요.');
+    await expect.poll(() => participantInput.evaluate(
+      (element) => window.getComputedStyle(element).animationName,
+    )).toBe('none');
   });
 
   test('전체 공개는 배정 직후 모든 결과를 기존 카드 흐름으로 표시한다', async ({ page }) => {
@@ -70,6 +133,8 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByText(/이름이 중복됩니다/u)).toBeVisible();
     await expect(page.getByLabel('참가자 2', { exact: true })).toBeFocused();
     await expect(page.getByLabel('참가자 2', { exact: true })).toHaveAttribute('aria-invalid', 'true');
+    await page.getByLabel('참가자 1', { exact: true }).focus();
+    await expect(page.getByText(/이름이 중복됩니다/u)).toBeVisible();
   });
 
   test('배정 직후 역할은 DOM에 없고 참가자 확인 뒤 다시 제거된다', async ({ page }) => {

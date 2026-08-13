@@ -27,11 +27,10 @@ import {
   ValidationField,
   ValidationIssue,
   assign,
-  codePointLength,
   createCryptoRandomIndex,
   createLookupKey,
+  limitDisplayInput,
   normalizeDisplayValue,
-  utf8ByteLength,
   validateSetup,
 } from '@/utils';
 
@@ -65,6 +64,11 @@ interface LinkBuildResult {
   error?: string;
 }
 
+interface InputLimitWarning {
+  message: string;
+  sequence: number;
+}
+
 const initialParticipants = (): ParticipantDraft[] => [
   { id: 'participant-1', name: '' },
   { id: 'participant-2', name: '' },
@@ -73,16 +77,6 @@ const initialParticipants = (): ParticipantDraft[] => [
 const initialRoles = (): RoleDraft[] => [
   { id: 'role-1', name: '', count: '0' },
 ];
-
-function textMeasure(value: string, maxCodePoints: number, maxBytes: number) {
-  const normalized = normalizeDisplayValue(value);
-  const points = codePointLength(normalized);
-  const bytes = utf8ByteLength(normalized);
-  return {
-    text: `남은 ${Math.max(0, maxCodePoints - points)}자 · ${bytes}/${maxBytes}B`,
-    over: points > maxCodePoints || bytes > maxBytes,
-  };
-}
 
 function linkErrorState(error: unknown): InvalidLinkState {
   if (error instanceof PayloadError && error.code === 'too-long') {
@@ -158,12 +152,64 @@ export default function RoleAssigner() {
   const [sharedError, setSharedError] = useState('');
   const [sharedMatch, setSharedMatch] = useState<Assignment | null>(null);
   const [sharedRevealed, setSharedRevealed] = useState(false);
+  const [inputLimitWarnings, setInputLimitWarnings] = useState<Record<string, InputLimitWarning>>({});
 
   const participantIdRef = useRef(3);
   const roleIdRef = useRef(2);
   const shuffleTimerRef = useRef<number | null>(null);
+  const inputLimitSequencesRef = useRef(new Map<ValidationField, number>());
+  const inputLimitTimersRef = useRef(new Map<ValidationField, number>());
+  const composingFieldsRef = useRef(new Set<ValidationField>());
   const fieldRefs = useRef(new Map<ValidationField, HTMLElement>());
   const sharedNameRef = useRef<HTMLInputElement>(null);
+
+  const clearInputLimitWarning = useCallback((field: ValidationField) => {
+    const timer = inputLimitTimersRef.current.get(field);
+    if (timer !== undefined) window.clearTimeout(timer);
+    inputLimitTimersRef.current.delete(field);
+    inputLimitSequencesRef.current.delete(field);
+    setInputLimitWarnings((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }, []);
+
+  const clearAllInputLimitWarnings = useCallback(() => {
+    inputLimitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    inputLimitTimersRef.current.clear();
+    inputLimitSequencesRef.current.clear();
+    composingFieldsRef.current.clear();
+    setInputLimitWarnings({});
+  }, []);
+
+  const triggerInputLimitWarning = useCallback((field: ValidationField, maxCodePoints: number) => {
+    const existingTimer = inputLimitTimersRef.current.get(field);
+    if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+
+    const sequence = (inputLimitSequencesRef.current.get(field) ?? 0) + 1;
+    inputLimitSequencesRef.current.set(field, sequence);
+    setInputLimitWarnings((current) => ({
+      ...current,
+      [field]: {
+        message: `최대 ${maxCodePoints}자까지 입력할 수 있어요.`,
+        sequence,
+      },
+    }));
+
+    const timer = window.setTimeout(() => {
+      inputLimitTimersRef.current.delete(field);
+      inputLimitSequencesRef.current.delete(field);
+      setInputLimitWarnings((current) => {
+        if (current[field]?.sequence !== sequence) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+    }, 1_800);
+    inputLimitTimersRef.current.set(field, timer);
+  }, []);
 
   const closeParticipantDialog = useCallback(() => {
     setParticipantRevealed(false);
@@ -223,6 +269,7 @@ export default function RoleAssigner() {
 
   useEffect(() => () => {
     if (shuffleTimerRef.current !== null) window.clearTimeout(shuffleTimerRef.current);
+    inputLimitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
 
   useEffect(() => {
@@ -246,6 +293,28 @@ export default function RoleAssigner() {
   const clearIssuesFor = (...fields: ValidationField[]) => {
     setIssues((current) => current.filter((issue) => !fields.includes(issue.field)));
     setRuntimeError('');
+  };
+
+  const applyBoundedNameInput = (
+    field: ValidationField,
+    value: string,
+    maxCodePoints: number,
+    maxBytes: number,
+    commit: (nextValue: string) => void,
+    composing = false,
+    clearValidation = true,
+  ) => {
+    if (clearValidation) clearIssuesFor(field, 'participants', 'roles');
+    if (composing) {
+      clearInputLimitWarning(field);
+      commit(value);
+      return;
+    }
+
+    const limited = limitDisplayInput(value, maxCodePoints, maxBytes);
+    commit(limited.value);
+    if (limited.exceeded) triggerInputLimitWarning(field, maxCodePoints);
+    else clearInputLimitWarning(field);
   };
 
   const focusFirstIssue = (nextIssues: ValidationIssue[]) => {
@@ -320,8 +389,11 @@ export default function RoleAssigner() {
 
   const removeParticipant = (id: string) => {
     if (participants.length <= LIMITS.minParticipants) return;
+    const field: ValidationField = `participant:${id}`;
+    clearInputLimitWarning(field);
+    composingFieldsRef.current.delete(field);
     setParticipants((current) => current.filter((participant) => participant.id !== id));
-    clearIssuesFor(`participant:${id}`, 'participants', 'roles');
+    clearIssuesFor(field, 'participants', 'roles');
   };
 
   const addRole = () => {
@@ -334,8 +406,11 @@ export default function RoleAssigner() {
 
   const removeRole = (id: string) => {
     if (roles.length <= 1) return;
+    const nameField: ValidationField = `role-name:${id}`;
+    clearInputLimitWarning(nameField);
+    composingFieldsRef.current.delete(nameField);
     setRoles((current) => current.filter((role) => role.id !== id));
-    clearIssuesFor(`role-name:${id}`, `role-count:${id}`, 'roles');
+    clearIssuesFor(nameField, `role-count:${id}`, 'roles');
   };
 
   const resetSetup = useCallback(() => {
@@ -358,11 +433,12 @@ export default function RoleAssigner() {
     setSharedError('');
     setSharedMatch(null);
     setSharedRevealed(false);
+    clearAllInputLimitWarnings();
     clearHostRevealState();
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     setViewState('setup');
     setHashChecked(true);
-  }, [clearHostRevealState]);
+  }, [clearAllInputLimitWarnings, clearHostRevealState]);
 
   const confirmReassign = () => {
     setConfirmation(null);
@@ -935,6 +1011,7 @@ export default function RoleAssigner() {
                 setParticipants(initialParticipants());
                 participantIdRef.current = 3;
                 setIssues([]);
+                clearAllInputLimitWarnings();
               }}
               className="ra-icon-button"
               aria-label="참가자 입력 초기화"
@@ -950,14 +1027,16 @@ export default function RoleAssigner() {
             {participants.map((participant, index) => {
               const field: ValidationField = `participant:${participant.id}`;
               const error = issueFor(field);
-              const measure = textMeasure(
-                participant.name,
-                LIMITS.maxParticipantCodePoints,
-                LIMITS.maxParticipantBytes,
-              );
+              const warning = inputLimitWarnings[field];
               const inputId = `participant-input-${participant.id}`;
-              const helpId = `participant-help-${participant.id}`;
+              const warningId = `participant-limit-${participant.id}`;
               const errorId = `participant-error-${participant.id}`;
+              const describedBy = [warning ? warningId : '', error ? errorId : '']
+                .filter(Boolean)
+                .join(' ') || undefined;
+              const warningMotionClass = warning
+                ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
+                : '';
               return (
                 <div key={participant.id} className="ra-input-row">
                   <div className="min-w-0 flex-1">
@@ -968,26 +1047,64 @@ export default function RoleAssigner() {
                       type="text"
                       value={participant.name}
                       onChange={(event) => {
-                        const value = event.target.value;
-                        setParticipants((current) => current.map((item) => (
-                          item.id === participant.id ? { ...item, name: value } : item
-                        )));
-                        clearIssuesFor(field, 'participants', 'roles');
+                        applyBoundedNameInput(
+                          field,
+                          event.currentTarget.value,
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                          composingFieldsRef.current.has(field),
+                        );
                       }}
-                      onBlur={() => {
-                        setParticipants((current) => current.map((item) => (
-                          item.id === participant.id
-                            ? { ...item, name: normalizeDisplayValue(item.name) }
-                            : item
-                        )));
+                      onCompositionStart={() => {
+                        composingFieldsRef.current.add(field);
+                        clearInputLimitWarning(field);
                       }}
-                      aria-invalid={Boolean(error) || measure.over}
-                      aria-describedby={`${helpId}${error ? ` ${errorId}` : ''}`}
+                      onCompositionEnd={(event) => {
+                        composingFieldsRef.current.delete(field);
+                        applyBoundedNameInput(
+                          field,
+                          event.currentTarget.value,
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                        );
+                      }}
+                      onBlur={(event) => {
+                        composingFieldsRef.current.delete(field);
+                        applyBoundedNameInput(
+                          field,
+                          normalizeDisplayValue(event.currentTarget.value),
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                          false,
+                          false,
+                        );
+                      }}
+                      aria-invalid={Boolean(error)}
+                      aria-describedby={describedBy}
                       autoComplete="off"
-                      className="ra-input mt-2"
+                      className={`ra-input mt-2${warningMotionClass}`}
                     />
                     <div className="ra-input-meta">
-                      <span id={helpId} className={measure.over ? 'text-red-300' : undefined}>{measure.text}</span>
+                      {warning && (
+                        <span
+                          key={warning.sequence}
+                          id={warningId}
+                          className="ra-input-limit-message"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {warning.message}
+                        </span>
+                      )}
                       {error && <span id={errorId} className="ra-field-error" role="alert">{error}</span>}
                     </div>
                   </div>
@@ -1070,6 +1187,7 @@ export default function RoleAssigner() {
                   setRoles(initialRoles());
                   roleIdRef.current = 2;
                   setIssues([]);
+                  clearAllInputLimitWarnings();
                 }}
                 className="ra-icon-button"
                 aria-label="역할 입력 초기화"
@@ -1087,9 +1205,17 @@ export default function RoleAssigner() {
                 const countField: ValidationField = `role-count:${role.id}`;
                 const nameError = issueFor(nameField);
                 const countError = issueFor(countField);
-                const measure = textMeasure(role.name, LIMITS.maxRoleCodePoints, LIMITS.maxRoleBytes);
+                const warning = inputLimitWarnings[nameField];
                 const nameId = `role-name-${role.id}`;
+                const warningId = `role-name-limit-${role.id}`;
+                const nameErrorId = `role-name-error-${role.id}`;
                 const countId = `role-count-${role.id}`;
+                const describedBy = [warning ? warningId : '', nameError ? nameErrorId : '']
+                  .filter(Boolean)
+                  .join(' ') || undefined;
+                const warningMotionClass = warning
+                  ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
+                  : '';
                 return (
                   <div key={role.id} className="ra-role-row">
                     <div className="min-w-0 flex-1">
@@ -1100,29 +1226,65 @@ export default function RoleAssigner() {
                         type="text"
                         value={role.name}
                         onChange={(event) => {
-                          const value = event.target.value;
-                          setRoles((current) => current.map((item) => (
-                            item.id === role.id ? { ...item, name: value } : item
-                          )));
-                          clearIssuesFor(nameField, 'roles');
+                          applyBoundedNameInput(
+                            nameField,
+                            event.currentTarget.value,
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                            composingFieldsRef.current.has(nameField),
+                          );
                         }}
-                        onBlur={() => {
-                          setRoles((current) => current.map((item) => (
-                            item.id === role.id
-                              ? { ...item, name: normalizeDisplayValue(item.name) }
-                              : item
-                          )));
+                        onCompositionStart={() => {
+                          composingFieldsRef.current.add(nameField);
+                          clearInputLimitWarning(nameField);
                         }}
-                        aria-invalid={Boolean(nameError) || measure.over}
-                        aria-describedby={`role-name-help-${role.id}${nameError ? ` role-name-error-${role.id}` : ''}`}
-                        className="ra-input mt-2"
+                        onCompositionEnd={(event) => {
+                          composingFieldsRef.current.delete(nameField);
+                          applyBoundedNameInput(
+                            nameField,
+                            event.currentTarget.value,
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                          );
+                        }}
+                        onBlur={(event) => {
+                          composingFieldsRef.current.delete(nameField);
+                          applyBoundedNameInput(
+                            nameField,
+                            normalizeDisplayValue(event.currentTarget.value),
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                            false,
+                            false,
+                          );
+                        }}
+                        aria-invalid={Boolean(nameError)}
+                        aria-describedby={describedBy}
+                        className={`ra-input mt-2${warningMotionClass}`}
                       />
                       <div className="ra-input-meta">
-                        <span id={`role-name-help-${role.id}`} className={measure.over ? 'text-red-300' : undefined}>
-                          {measure.text}
-                        </span>
+                        {warning && (
+                          <span
+                            key={warning.sequence}
+                            id={warningId}
+                            className="ra-input-limit-message"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {warning.message}
+                          </span>
+                        )}
                         {nameError && (
-                          <span id={`role-name-error-${role.id}`} className="ra-field-error" role="alert">{nameError}</span>
+                          <span id={nameErrorId} className="ra-field-error" role="alert">{nameError}</span>
                         )}
                       </div>
                     </div>
