@@ -19,9 +19,11 @@ async function assignGeneralRoles(
   await page.getByLabel('참가자 1', { exact: true }).fill(names[0]);
   await page.getByLabel('참가자 2', { exact: true }).fill(names[1]);
   await page.getByLabel('역할 1', { exact: true }).fill(role);
-  await page.getByLabel('인원').fill('0');
+  await page.getByLabel('인원', { exact: true }).fill('0');
   await page.getByRole('button', { name: '역할 배정하기' }).click();
-  await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+  await expect(page.getByRole('heading', {
+    name: revealMode === 'public' ? '역할 배정 완료!' : '역할 배정이 끝났습니다',
+  })).toBeVisible();
 }
 
 async function copyShareLink(page: Page, scope: ReturnType<Page['locator']>): Promise<string> {
@@ -42,14 +44,17 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await openSetup(page);
     await expect(page.getByRole('radio', { name: '전체 공개' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('radio', { name: '개별 공개' })).toBeVisible();
-    await expect(page.getByText('2/20명')).toBeVisible();
+    await expect(page.getByText('0명', { exact: true })).toBeVisible();
     await expect(page.getByText(/남은 \d+자|\d+\/80B/u)).toHaveCount(0);
 
-    await page.getByRole('radio', { name: /마니또/u }).click();
-    await expect(page.getByRole('heading', { name: '한 사람도 자기 자신을 뽑지 않습니다' })).toBeVisible();
+    const manitoToggle = page.getByRole('switch', { name: '마니또 모드' });
+    await expect(manitoToggle).toHaveAttribute('aria-checked', 'false');
+    await manitoToggle.click();
+    await expect(manitoToggle).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByText(/자기 자신은 배정되지 않습니다/u)).toBeVisible();
     await expect(page.getByLabel('역할 1', { exact: true })).toHaveCount(0);
 
-    await page.getByRole('radio', { name: /일반 역할/u }).click();
+    await manitoToggle.click();
     await expect(page.getByLabel('역할 1', { exact: true })).toBeVisible();
   });
 
@@ -224,7 +229,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByRole('radio', { name: '개별 공개' }).click();
     await page.getByLabel('참가자 1', { exact: true }).fill('A');
     await page.getByLabel('참가자 2', { exact: true }).fill('B');
-    await page.getByRole('radio', { name: /마니또/u }).click();
+    await page.getByRole('switch', { name: '마니또 모드' }).click();
     await page.getByRole('button', { name: '마니또 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '마니또 배정이 끝났습니다' })).toBeVisible();
 
@@ -250,6 +255,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('참가자 1', { exact: true }).fill('A');
     await page.getByLabel('참가자 2', { exact: true }).fill('B');
     await page.getByLabel('역할 1', { exact: true }).fill('시민');
+    await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
     expect(roleDataRequests).toEqual([]);
@@ -342,6 +348,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('참가자 1', { exact: true }).fill('Alice');
     await page.getByLabel('참가자 2', { exact: true }).fill('철수');
     await page.getByLabel('역할 1', { exact: true }).fill('새 역할');
+    await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
     const newUrl = await copyShareLink(page, page.locator('.ra-result-actions'));
@@ -370,6 +377,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('참가자 1', { exact: true }).fill('긴 한글 이름 참가자');
     await page.getByLabel('참가자 2', { exact: true }).fill('مرحبا');
     await page.getByLabel('역할 1', { exact: true }).fill('아주 긴 역할 이름도 줄바꿈');
+    await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
     const resultOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

@@ -75,7 +75,7 @@ const initialParticipants = (): ParticipantDraft[] => [
 ];
 
 const initialRoles = (): RoleDraft[] => [
-  { id: 'role-1', name: '', count: '0' },
+  { id: 'role-1', name: '', count: '1' },
 ];
 
 function linkErrorState(error: unknown): InvalidLinkState {
@@ -654,14 +654,37 @@ export default function RoleAssigner() {
 
   if (viewState === 'shuffling') {
     return (
-      <div className="ra-page-shell ra-shuffle-screen" role="status" aria-live="polite">
-        <div className="ra-shuffle-stage" aria-hidden="true">
-          <div className="ra-shuffle-card ra-shuffle-card-left">?</div>
-          <div className="ra-shuffle-card ra-shuffle-card-center">🎴</div>
-          <div className="ra-shuffle-card ra-shuffle-card-right">?</div>
+      <div className="ra-page-shell flex min-h-[400px] flex-col items-center justify-center" role="status" aria-live="polite">
+        <div className="relative">
+          <div className="mb-8 flex gap-4" aria-hidden="true">
+            {[0, 1, 2].map((index) => (
+              <div
+                key={index}
+                className="h-28 w-20 animate-float rounded-xl bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 shadow-2xl"
+                style={{ animationDelay: `${index * 0.1}s` }}
+              >
+                <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-900/50 backdrop-blur">
+                  <span className="text-3xl">🎴</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-center">
+            <p className="animate-pulse text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
+              섞는 중...
+            </p>
+            <p className="sr-only">결과는 이 브라우저 안에서만 만들어집니다.</p>
+            <div className="mt-4 flex justify-center gap-1" aria-hidden="true">
+              {[0, 1, 2].map((index) => (
+                <span
+                  key={index}
+                  className="h-3 w-3 animate-bounce rounded-full bg-pink-500"
+                  style={{ animationDelay: `${index * 0.1}s` }}
+                />
+              ))}
+            </div>
+          </div>
         </div>
-        <p className="mt-10 text-2xl font-black text-white">결과를 안전하게 섞는 중</p>
-        <p className="mt-2 text-sm text-slate-300">결과는 이 브라우저 안에서만 만들어집니다.</p>
       </div>
     );
   }
@@ -672,15 +695,53 @@ export default function RoleAssigner() {
     if (revealMode === 'public') {
       return (
         <div className="ra-page-shell">
-          <header className="ra-public-results-header">
-            <span className="ra-celebration-mark animate-bounce-in" aria-hidden="true">🎉</span>
+          <header className="mb-8 text-center">
+            <span className="inline-block animate-bounce-in text-6xl drop-shadow-lg" aria-hidden="true">🎉</span>
             <h1 className="mt-4 text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">
-              {label} 배정이 끝났습니다
+              {label} 배정 완료!
             </h1>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              전체 공개를 선택해 모든 결과를 한 화면에 표시합니다.
-            </p>
           </header>
+
+          <section className={`ra-public-results-grid mb-8 grid gap-3 ${
+            assignments.length <= 4
+              ? 'grid-cols-1'
+              : assignments.length <= 8
+                ? 'grid-cols-1 sm:grid-cols-2'
+                : 'grid-cols-2 sm:grid-cols-3'
+          }`} aria-label="전체 결과">
+            {assignments.map((assignment, index) => (
+              <article
+                key={createLookupKey(assignment.name)}
+                className="relative overflow-hidden rounded-2xl animate-reveal"
+                style={{ animationDelay: `${index * 0.08}s` }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
+                <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${assignments.length > 4 ? 'p-3' : 'p-4'}`}>
+                  <div className="mb-2 flex min-w-0 items-center gap-3">
+                    <span className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-600 font-bold text-white shadow-lg shadow-pink-500/30 ${assignments.length > 4 ? 'h-8 w-8 text-sm' : 'h-10 w-10 text-base'}`} aria-hidden="true">
+                      {[...assignment.name][0]?.toUpperCase() ?? '?'}
+                    </span>
+                    <h2 className={`min-w-0 break-words font-bold text-white ${assignments.length > 4 ? 'text-sm' : 'text-base'}`}>
+                      {assignment.name}
+                    </h2>
+                  </div>
+                  <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${assignments.length > 4 ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
+                    <span className="sr-only">{label}: </span>
+                    <span>{assignment.role}</span>
+                  </p>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <div className="ra-public-share mb-4">
+            <ShareControl
+              url={shareLinks.shared.url}
+              disabledReason={shareLinks.shared.error}
+              label="결과 공유하기"
+              shareTitle={`${label} 배정 공용 결과`}
+            />
+          </div>
 
           <div className="ra-memory-warning" role="note">
             <span aria-hidden="true">⌛</span>
@@ -689,39 +750,15 @@ export default function RoleAssigner() {
             </p>
           </div>
 
-          <section className="ra-public-results-grid" aria-label="전체 결과">
-            {assignments.map((assignment) => (
-              <article key={createLookupKey(assignment.name)} className="ra-public-result-card animate-reveal">
-                <div className="ra-public-result-identity">
-                  <span className="ra-avatar" aria-hidden="true">
-                    {[...assignment.name][0]?.toUpperCase() ?? '?'}
-                  </span>
-                  <h2 className="min-w-0 break-words font-bold text-white">{assignment.name}</h2>
-                </div>
-                <p className="ra-public-result-role">
-                  <span className="sr-only">{label}: </span>
-                  <span>{assignment.role}</span>
-                </p>
-              </article>
-            ))}
-          </section>
-
-          <div className="ra-public-share">
-            <ShareControl
-              url={shareLinks.shared.url}
-              disabledReason={shareLinks.shared.error}
-              label="공용 링크 공유"
-              shareTitle={`${label} 배정 공용 결과`}
-            />
-          </div>
-
           <PrivacyNotice shared />
 
-          <div className="ra-bottom-actions">
-            <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary">
+          <div className="mt-7 flex gap-4">
+            <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary flex-1">
+              <span aria-hidden="true">🔄</span>
               새 게임
             </button>
-            <button type="button" onClick={() => setConfirmation('reassign')} className="ra-btn-primary">
+            <button type="button" onClick={() => setConfirmation('reassign')} className="ra-btn-primary flex-1">
+              <span aria-hidden="true">🎲</span>
               다시 배정
             </button>
           </div>
@@ -952,7 +989,7 @@ export default function RoleAssigner() {
 
   return (
     <div className="ra-page-shell">
-      <header className="ra-hero">
+      <header className="ra-hero mb-8">
         <h1 className="text-4xl font-black sm:text-5xl">
           <span className="mr-2" aria-hidden="true">🎭</span>
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
@@ -960,7 +997,7 @@ export default function RoleAssigner() {
           </span>
         </h1>
         <p className="mt-2 text-sm text-slate-400 sm:text-base">
-          참가자와 역할을 입력하고 원하는 공개 방법을 선택하세요.
+          마피아, 마니또 역할을 간편하고 몰래 뽑아보세요!
         </p>
       </header>
 
@@ -984,27 +1021,30 @@ export default function RoleAssigner() {
           개별 공개
         </button>
       </div>
-      <p className="ra-reveal-help" aria-live="polite">
+      <p className="sr-only" aria-live="polite">
         {revealMode === 'public'
           ? '배정이 끝나면 모든 결과를 한 화면에 바로 표시합니다.'
           : '서버 연결 없이 배정하고, 모든 결과를 숨긴 상태에서 한 명씩 확인합니다.'}
       </p>
 
-      <form onSubmit={handleAssign} noValidate className="mt-8">
-        <fieldset
+      <form onSubmit={handleAssign} noValidate>
+        <section
           ref={setFieldRef('participants')}
           tabIndex={-1}
-          className="ra-form-section"
+          className="mb-8"
+          aria-labelledby="participants-title"
           aria-describedby={participantSectionError ? 'participants-error' : 'participants-help'}
         >
-          <legend className="ra-form-legend">
-            <span>참가자</span>
-            <span className="ra-count-badge">{participants.length}/{LIMITS.maxParticipants}명</span>
-          </legend>
-          <div className="ra-section-heading-row">
-            <p id="participants-help" className="text-sm leading-6 text-slate-300">
-              2–20명, 이름은 20자·UTF-8 80바이트까지 입력할 수 있습니다.
-            </p>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl" aria-hidden="true">👥</span>
+              <h2 id="participants-title" className="text-xl font-black text-white">
+                참가자
+                <span className="ml-2 rounded-lg bg-pink-500/20 px-2 py-1 text-sm text-pink-400">
+                  {participants.filter((participant) => normalizeDisplayValue(participant.name)).length}명
+                </span>
+              </h2>
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -1013,17 +1053,26 @@ export default function RoleAssigner() {
                 setIssues([]);
                 clearAllInputLimitWarnings();
               }}
-              className="ra-icon-button"
+              className="ra-icon-button ra-setup-reset hover:text-pink-400"
               aria-label="참가자 입력 초기화"
             >
-              <span aria-hidden="true">↺</span>
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
             </button>
           </div>
+          <p id="participants-help" className="sr-only">참가자는 최소 2명, 최대 20명입니다.</p>
           {participantSectionError && (
             <p id="participants-error" className="ra-field-error" role="alert">{participantSectionError}</p>
           )}
 
-          <div className="ra-input-list">
+          <div className={`grid gap-3 ${
+            participants.length <= 4
+              ? 'grid-cols-1'
+              : participants.length <= 8
+                ? 'grid-cols-1 sm:grid-cols-2'
+                : 'grid-cols-2 sm:grid-cols-3'
+          }`}>
             {participants.map((participant, index) => {
               const field: ValidationField = `participant:${participant.id}`;
               const error = issueFor(field);
@@ -1038,14 +1087,18 @@ export default function RoleAssigner() {
                 ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
                 : '';
               return (
-                <div key={participant.id} className="ra-input-row">
-                  <div className="min-w-0 flex-1">
-                    <label htmlFor={inputId} className="ra-label">참가자 {index + 1}</label>
+                <div
+                  key={participant.id}
+                  className={`ra-input-row group min-w-0 ${index > 1 ? 'animate-pop' : ''}`}
+                >
+                  <div className="flex min-w-0 gap-2">
+                    <div className="min-w-0 flex-1">
                     <input
                       ref={setFieldRef(field) as (element: HTMLInputElement | null) => void}
                       id={inputId}
                       type="text"
                       value={participant.name}
+                      placeholder={`참가자 ${index + 1}`}
                       onChange={(event) => {
                         applyBoundedNameInput(
                           field,
@@ -1090,10 +1143,11 @@ export default function RoleAssigner() {
                       }}
                       aria-invalid={Boolean(error)}
                       aria-describedby={describedBy}
+                      aria-label={`참가자 ${index + 1}`}
                       autoComplete="off"
-                      className={`ra-input mt-2${warningMotionClass}`}
+                      className={`ra-input w-full shadow-inner ${participants.length > 4 ? 'min-h-11 py-2.5 text-sm' : ''}${warningMotionClass}`}
                     />
-                    <div className="ra-input-meta">
+                    {(warning || error) && <div className="ra-input-feedback">
                       {warning && (
                         <span
                           key={warning.sequence}
@@ -1106,17 +1160,21 @@ export default function RoleAssigner() {
                         </span>
                       )}
                       {error && <span id={errorId} className="ra-field-error" role="alert">{error}</span>}
+                    </div>}
                     </div>
+                    {participants.length > LIMITS.minParticipants && (
+                      <button
+                        type="button"
+                        onClick={() => removeParticipant(participant.id)}
+                        className={`flex shrink-0 items-center justify-center rounded-xl bg-red-500/20 font-bold text-red-400 transition-all duration-300 hover:bg-red-500 hover:text-white active:scale-90 ${
+                          participants.length > 4 ? 'h-11 w-11 text-base' : 'h-12 w-12 text-xl'
+                        }`}
+                        aria-label={`참가자 ${index + 1} 삭제`}
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => removeParticipant(participant.id)}
-                    disabled={participants.length <= LIMITS.minParticipants}
-                    className="ra-remove-button"
-                    aria-label={`참가자 ${index + 1} 삭제`}
-                  >
-                    <span aria-hidden="true">×</span>
-                  </button>
                 </div>
               );
             })}
@@ -1126,61 +1184,49 @@ export default function RoleAssigner() {
             type="button"
             onClick={addParticipant}
             disabled={participants.length >= LIMITS.maxParticipants}
-            className="ra-add-button"
+            className="ra-add-button ra-add-participant"
           >
             <span aria-hidden="true">＋</span>
-            {participants.length >= LIMITS.maxParticipants ? '최대 20명입니다' : '참가자 추가'}
+            참가자 추가
           </button>
-        </fieldset>
+        </section>
 
-        <fieldset className="ra-form-section">
-          <legend className="ra-form-legend">배정 종류</legend>
-          <p className="text-sm leading-6 text-slate-300">공개 방법과 관계없이 어떤 결과를 뽑을지 선택합니다.</p>
-          <div className="ra-mode-switch" role="radiogroup" aria-label="배정 종류">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === 'role'}
-              onClick={() => {
-                setMode('role');
-                setIssues([]);
-              }}
-              className={mode === 'role' ? 'ra-mode-option ra-mode-option-active' : 'ra-mode-option'}
-            >
-              <span className="font-black">일반 역할</span>
-              <span className="text-xs">역할과 인원수를 직접 구성</span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === 'manito'}
-              onClick={() => {
-                setMode('manito');
-                setIssues([]);
-              }}
-              className={mode === 'manito' ? 'ra-mode-option ra-mode-option-active' : 'ra-mode-option'}
-            >
-              <span className="font-black">마니또</span>
-              <span className="text-xs">자기 자신 없이 하나의 순환으로 배정</span>
-            </button>
-          </div>
-        </fieldset>
-
-        {mode === 'role' ? (
-          <fieldset
+        <section
             ref={setFieldRef('roles')}
             tabIndex={-1}
-            className="ra-form-section"
+            className="mb-8"
+            aria-labelledby="roles-title"
             aria-describedby={roleSectionError ? 'roles-error' : 'roles-help'}
           >
-            <legend className="ra-form-legend">
-              <span>역할 설정</span>
-              <span className="ra-count-badge">{roles.length}/{LIMITS.maxRoles}개</span>
-            </legend>
-            <div className="ra-section-heading-row">
-              <p id="roles-help" className="text-sm leading-6 text-slate-300">
-                역할 이름은 30자·120바이트까지, 인원은 0–20명으로 설정합니다.
-              </p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl" aria-hidden="true">🎭</span>
+                <h2 id="roles-title" className="text-xl font-black text-white">역할 설정</h2>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={mode === 'manito'}
+                  aria-label="마니또 모드"
+                  onClick={() => {
+                    setMode((current) => current === 'manito' ? 'role' : 'manito');
+                    setIssues([]);
+                    setRuntimeError('');
+                  }}
+                  className="flex min-h-11 items-center gap-2 text-sm text-slate-400"
+                >
+                  <span aria-hidden="true">🎁 마니또</span>
+                  <span className={`relative h-6 w-12 rounded-full transition-colors ${
+                    mode === 'manito' ? 'bg-gradient-to-r from-pink-500 to-purple-500' : 'bg-slate-600'
+                  }`} aria-hidden="true">
+                    <span
+                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                        mode === 'manito' ? 'translate-x-6' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1189,17 +1235,25 @@ export default function RoleAssigner() {
                   setIssues([]);
                   clearAllInputLimitWarnings();
                 }}
-                className="ra-icon-button"
+                className="ra-icon-button ra-setup-reset"
                 aria-label="역할 입력 초기화"
+                disabled={mode === 'manito'}
               >
-                <span aria-hidden="true">↺</span>
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
               </button>
+              </div>
             </div>
+            <p id="roles-help" className="sr-only">
+              일반 역할은 역할별 인원수를 설정합니다. 마니또는 자기 자신을 제외하고 한 명씩 배정합니다.
+            </p>
             {roleSectionError && (
               <p id="roles-error" className="ra-field-error" role="alert">{roleSectionError}</p>
             )}
 
-            <div className="ra-input-list">
+            {mode === 'role' ? <>
+            <div className={`grid gap-3 ${roles.length <= 3 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
               {roles.map((role, index) => {
                 const nameField: ValidationField = `role-name:${role.id}`;
                 const countField: ValidationField = `role-count:${role.id}`;
@@ -1216,15 +1270,17 @@ export default function RoleAssigner() {
                 const warningMotionClass = warning
                   ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
                   : '';
+                const numericCount = Number.isFinite(Number(role.count)) ? Number(role.count) : 0;
                 return (
-                  <div key={role.id} className="ra-role-row">
-                    <div className="min-w-0 flex-1">
-                      <label htmlFor={nameId} className="ra-label">역할 {index + 1}</label>
+                  <div key={role.id} className={`ra-role-row min-w-0 ${index > 0 ? 'animate-pop' : ''}`}>
+                    <div className="flex min-w-0 gap-2">
+                      <div className="min-w-0 flex-1">
                       <input
                         ref={setFieldRef(nameField) as (element: HTMLInputElement | null) => void}
                         id={nameId}
                         type="text"
                         value={role.name}
+                        placeholder="역할 이름"
                         onChange={(event) => {
                           applyBoundedNameInput(
                             nameField,
@@ -1269,9 +1325,10 @@ export default function RoleAssigner() {
                         }}
                         aria-invalid={Boolean(nameError)}
                         aria-describedby={describedBy}
-                        className={`ra-input mt-2${warningMotionClass}`}
+                        aria-label={`역할 ${index + 1}`}
+                        className={`ra-input w-full shadow-inner ${roles.length > 3 ? 'min-h-11 py-2.5 text-sm' : ''}${warningMotionClass}`}
                       />
-                      <div className="ra-input-meta">
+                      {(warning || nameError) && <div className="ra-input-feedback">
                         {warning && (
                           <span
                             key={warning.sequence}
@@ -1286,11 +1343,23 @@ export default function RoleAssigner() {
                         {nameError && (
                           <span id={nameErrorId} className="ra-field-error" role="alert">{nameError}</span>
                         )}
+                      </div>}
                       </div>
-                    </div>
-                    <div className="ra-count-field">
-                      <label htmlFor={countId} className="ra-label">인원</label>
-                      <div className="relative mt-2">
+                      <div className="shrink-0">
+                      <div className="flex items-center overflow-hidden rounded-2xl border-2 border-slate-800 bg-slate-900">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoles((current) => current.map((item) => item.id === role.id
+                              ? { ...item, count: String(Math.max(0, numericCount - 1)) }
+                              : item));
+                            clearIssuesFor(countField, 'roles');
+                          }}
+                          className={`min-w-11 bg-slate-900 font-bold text-slate-400 transition-colors hover:bg-slate-800 hover:text-white ${roles.length > 3 ? 'h-11' : 'h-12 text-lg'}`}
+                          aria-label={`${index + 1}번째 역할 인원 줄이기`}
+                        >
+                          −
+                        </button>
                         <input
                           ref={setFieldRef(countField) as (element: HTMLInputElement | null) => void}
                           id={countId}
@@ -1309,35 +1378,48 @@ export default function RoleAssigner() {
                           }}
                           aria-invalid={Boolean(countError)}
                           aria-describedby={`role-count-help-${role.id}${countError ? ` role-count-error-${role.id}` : ''}`}
-                          className="ra-input ra-count-input"
+                          aria-label="인원"
+                          className={`ra-count-stepper-input border-x-2 border-slate-800/50 bg-slate-900 text-center font-bold text-white outline-none ${roles.length > 3 ? 'h-11 w-10' : 'h-12 w-12 text-lg'}`}
                         />
-                        <span className="ra-count-unit" aria-hidden="true">명</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoles((current) => current.map((item) => item.id === role.id
+                              ? { ...item, count: String(Math.min(LIMITS.maxParticipants, numericCount + 1)) }
+                              : item));
+                            clearIssuesFor(countField, 'roles');
+                          }}
+                          className={`min-w-11 bg-slate-900 font-bold text-slate-400 transition-colors hover:bg-slate-800 hover:text-white ${roles.length > 3 ? 'h-11' : 'h-12 text-lg'}`}
+                          aria-label={`${index + 1}번째 역할 인원 늘리기`}
+                        >
+                          +
+                        </button>
                       </div>
-                      <p id={`role-count-help-${role.id}`} className="mt-2 text-xs leading-5 text-slate-400">
-                        0명 = 나머지
-                      </p>
+                      <p id={`role-count-help-${role.id}`} className="sr-only">0명은 나머지 인원을 뜻합니다.</p>
                       {countError && (
                         <p id={`role-count-error-${role.id}`} className="ra-field-error" role="alert">{countError}</p>
                       )}
+                      </div>
+                      {roles.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeRole(role.id)}
+                          className={`flex shrink-0 items-center justify-center rounded-xl bg-red-500/20 font-bold text-red-400 transition-all duration-300 hover:bg-red-500 hover:text-white active:scale-90 ${roles.length > 3 ? 'h-11 w-11 text-base' : 'h-12 w-12 text-xl'}`}
+                          aria-label={`역할 ${index + 1} 삭제`}
+                        >
+                          <span aria-hidden="true">×</span>
+                        </button>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeRole(role.id)}
-                      disabled={roles.length <= 1}
-                      className="ra-remove-button ra-role-remove"
-                      aria-label={`역할 ${index + 1} 삭제`}
-                    >
-                      <span aria-hidden="true">×</span>
-                    </button>
                   </div>
                 );
               })}
             </div>
 
-            <div className="ra-inline-tip">
+            <p className="mt-3 flex items-center gap-2 pl-1 text-xs text-slate-400">
               <span aria-hidden="true">💡</span>
-              <p>0명 역할은 하나만 둘 수 있고, 지정 인원 뒤 남은 참가자를 모두 채웁니다.</p>
-            </div>
+              * 0명으로 설정하면 나머지 인원이 해당 역할로 배정됩니다
+            </p>
             <button
               type="button"
               onClick={addRole}
@@ -1345,42 +1427,66 @@ export default function RoleAssigner() {
               className="ra-add-button"
             >
               <span aria-hidden="true">＋</span>
-              {roles.length >= LIMITS.maxRoles ? '최대 20개입니다' : '역할 추가'}
+              역할 추가
             </button>
-          </fieldset>
-        ) : (
-          <section className="ra-form-section" aria-labelledby="manito-title">
-            <p className="ra-section-kicker">마니또 배정</p>
-            <h2 id="manito-title" className="mt-1 text-xl font-black text-white">한 사람도 자기 자신을 뽑지 않습니다</h2>
-            <p className="mt-3 leading-7 text-slate-300">
-              참가자 모두가 한 번씩 주고받는 단일 순환으로 섞습니다. 역할 입력은 필요하지 않습니다.
-            </p>
+            </> : (
+              <p className="rounded-xl bg-pink-500/10 px-4 py-3 text-sm leading-6 text-pink-100">
+                🎁 참가자끼리 한 명씩 이어지며, 자기 자신은 배정되지 않습니다.
+              </p>
+            )}
           </section>
-        )}
 
         {runtimeError && (
           <p className="ra-runtime-error" role="alert" tabIndex={-1}>{runtimeError}</p>
         )}
 
-        <button type="submit" className="ra-btn-primary ra-assign-button">
-          <span aria-hidden="true">🎲</span>
+        <button type="submit" className="ra-btn-primary w-full py-5 text-lg">
+          <span className="mr-3 text-2xl" aria-hidden="true">🎲</span>
           {mode === 'manito' ? '마니또 배정하기' : '역할 배정하기'}
+          <span className="ml-3 text-2xl" aria-hidden="true">🎲</span>
         </button>
       </form>
 
       <section className="ra-guide" aria-labelledby="guide-title">
         <div>
-          <p className="ra-section-kicker">어떻게 공개하나요?</p>
-          <h2 id="guide-title" className="mt-1 text-xl font-black text-white">선택한 방식으로 결과를 보여줍니다</h2>
+          <h2 id="guide-title" className="mb-2 flex items-center gap-2 text-lg font-bold text-white">
+            <span aria-hidden="true">💭</span> 만든 이유
+          </h2>
+          <p className="leading-relaxed text-slate-300">
+            마피아 게임할 때 역할 정하기가 너무 귀찮았어요. 쪽지 쓰고, 접고, 섞고... 이제 폰 하나로 역할 배정을 끝낼 수 있습니다.
+          </p>
         </div>
-        <ol className="ra-guide-steps">
-          <li><strong>전체 공개</strong><span>배정 직후 한 화면에서 모든 결과를 확인합니다.</span></li>
-          <li><strong>개별 공개</strong><span>같은 기기에서 결과를 숨기고 한 명씩 확인합니다.</span></li>
-          <li><strong>결과 링크</strong><span>개인 링크나 공용 링크로 다른 기기에 전달합니다.</span></li>
-        </ol>
-        <p className="text-sm leading-6 text-slate-300">
-          결과는 서버나 데이터베이스에 저장하지 않습니다. 링크는 암호화되지 않으며, 이미 보낸 링크는 다시 배정해도 만료되거나 바뀌지 않습니다.
-        </p>
+        <div>
+          <h3 className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
+            <span aria-hidden="true">✨</span> 주요 기능
+          </h3>
+          <ul className="space-y-2 text-slate-300">
+            <li>🤫 숨김 공개 - 한 기기에서 한 명씩 몰래 확인</li>
+            <li>🔗 결과 링크 - 개인 또는 공용 링크로 전달</li>
+            <li>🎯 스마트 자동 배정 - 0명 역할에 나머지 인원 배정</li>
+          </ul>
+        </div>
+        <div>
+          <h3 className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
+            <span aria-hidden="true">🎮</span> 사용 방법
+          </h3>
+          <div className="space-y-3">
+            <div className="rounded-xl bg-slate-700/50 p-3">
+              <p className="mb-1 font-medium text-cyan-400">🌐 전체 공개</p>
+              <p className="text-sm text-slate-400">배정 직후 한 화면에서 모든 결과를 확인합니다.</p>
+            </div>
+            <div className="rounded-xl bg-slate-700/50 p-3">
+              <p className="mb-1 font-medium text-pink-400">🤫 개별 공개</p>
+              <p className="text-sm text-slate-400">서버 연결 없이 결과를 숨기고, 한 명씩 확인하거나 링크로 공유합니다.</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+          <p className="mb-1 font-medium text-cyan-400">💡 팁</p>
+          <p className="text-sm text-cyan-300/80">
+            결과는 서버나 데이터베이스에 저장되지 않습니다. 공유한 링크는 만료하거나 회수할 수 없습니다.
+          </p>
+        </div>
       </section>
     </div>
   );
