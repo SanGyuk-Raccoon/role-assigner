@@ -26,7 +26,14 @@ export interface SharedResultPayload {
   assignments: Assignment[];
 }
 
-export type ResultPayload = PersonalResultPayload | SharedResultPayload;
+export interface AllResultsPayload {
+  v: typeof RESULT_PAYLOAD_VERSION;
+  kind: 'all';
+  mode: AssignmentMode;
+  assignments: Assignment[];
+}
+
+export type ResultPayload = PersonalResultPayload | SharedResultPayload | AllResultsPayload;
 
 export type PayloadErrorCode =
   | 'too-long'
@@ -129,9 +136,9 @@ export function validateResultPayload(value: unknown): ResultPayload {
     };
   }
 
-  if (value.kind === 'shared') {
+  if (value.kind === 'shared' || value.kind === 'all') {
     if (!hasExactKeys(value, ['v', 'kind', 'mode', 'assignments']) || value.v !== RESULT_PAYLOAD_VERSION) {
-      throw new PayloadError('invalid-schema', '공용 결과 payload 필드가 올바르지 않습니다.');
+      throw new PayloadError('invalid-schema', '전체 결과 payload 필드가 올바르지 않습니다.');
     }
     const mode = validateMode(value.mode);
     if (
@@ -139,7 +146,7 @@ export function validateResultPayload(value: unknown): ResultPayload {
       || value.assignments.length < LIMITS.minParticipants
       || value.assignments.length > LIMITS.maxParticipants
     ) {
-      throw new PayloadError('invalid-schema', '공용 결과의 참가자 수가 허용 범위를 벗어났습니다.');
+      throw new PayloadError('invalid-schema', '전체 결과의 참가자 수가 허용 범위를 벗어났습니다.');
     }
 
     const assignments = value.assignments.map((assignment) => validateAssignment(assignment, mode));
@@ -147,7 +154,7 @@ export function validateResultPayload(value: unknown): ResultPayload {
     for (const assignment of assignments) {
       const key = createLookupKey(assignment.name);
       if (participantKeys.has(key)) {
-        throw new PayloadError('invalid-schema', '공용 결과에 중복된 참가자 이름이 있습니다.');
+        throw new PayloadError('invalid-schema', '전체 결과에 중복된 참가자 이름이 있습니다.');
       }
       participantKeys.add(key);
     }
@@ -156,7 +163,7 @@ export function validateResultPayload(value: unknown): ResultPayload {
       throw new PayloadError('invalid-schema', '마니또 결과가 단일 순환 배정이 아닙니다.');
     }
 
-    return { v: RESULT_PAYLOAD_VERSION, kind: 'shared', mode, assignments };
+    return { v: RESULT_PAYLOAD_VERSION, kind: value.kind, mode, assignments };
   }
 
   throw new PayloadError('invalid-schema', '알 수 없는 결과 링크 종류입니다.');
@@ -251,6 +258,18 @@ export function createSharedPayload(
     mode,
     assignments: assignments.map((assignment) => ({ ...assignment })),
   }) as SharedResultPayload;
+}
+
+export function createAllResultsPayload(
+  mode: AssignmentMode,
+  assignments: readonly Assignment[],
+): AllResultsPayload {
+  return validateResultPayload({
+    v: RESULT_PAYLOAD_VERSION,
+    kind: 'all',
+    mode,
+    assignments: assignments.map((assignment) => ({ ...assignment })),
+  }) as AllResultsPayload;
 }
 
 export function readResultHash(hash: string): ResultPayload | null {

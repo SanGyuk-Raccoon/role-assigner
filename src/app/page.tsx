@@ -14,6 +14,7 @@ import {
   PayloadError,
   ResultPayload,
   buildResultUrl,
+  createAllResultsPayload,
   createPersonalPayload,
   createSharedPayload,
   readResultHash,
@@ -39,6 +40,7 @@ type ViewState =
   | 'shuffling'
   | 'results'
   | 'personal-link'
+  | 'all-link'
   | 'shared-link'
   | 'invalid-link';
 
@@ -101,15 +103,51 @@ function resultLabel(mode: AssignmentMode): string {
   return mode === 'manito' ? '마니또' : '역할';
 }
 
-function PrivacyNotice({ shared = false }: { shared?: boolean }) {
+function PublicResultsGrid({ assignments, label }: { assignments: Assignment[]; label: string }) {
+  return (
+    <section className={`ra-public-results-grid mb-8 grid gap-3 ${
+      assignments.length <= 4
+        ? 'grid-cols-1'
+        : assignments.length <= 8
+          ? 'grid-cols-1 sm:grid-cols-2'
+          : 'grid-cols-2 sm:grid-cols-3'
+    }`} aria-label="전체 결과">
+      {assignments.map((assignment, index) => (
+        <article
+          key={createLookupKey(assignment.name)}
+          className="relative overflow-hidden rounded-2xl animate-reveal"
+          style={{ animationDelay: `${index * 0.08}s` }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
+          <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${assignments.length > 4 ? 'p-3' : 'p-4'}`}>
+            <div className="mb-2 flex min-w-0 items-center gap-3">
+              <span className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-600 font-bold text-white shadow-lg shadow-pink-500/30 ${assignments.length > 4 ? 'h-8 w-8 text-sm' : 'h-10 w-10 text-base'}`} aria-hidden="true">
+                {[...assignment.name][0]?.toUpperCase() ?? '?'}
+              </span>
+              <h2 className={`min-w-0 break-words font-bold text-white ${assignments.length > 4 ? 'text-sm' : 'text-base'}`}>
+                {assignment.name}
+              </h2>
+            </div>
+            <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${assignments.length > 4 ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
+              <span className="sr-only">{label}: </span>
+              <span>{assignment.role}</span>
+            </p>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function PrivacyNotice({ allResults = false }: { allResults?: boolean }) {
   return (
     <div className="ra-privacy-note">
       <span className="ra-privacy-icon" aria-hidden="true">⌁</span>
       <div>
         <p className="font-bold text-slate-100">링크는 암호화되거나 잠기지 않습니다.</p>
         <p className="mt-1 text-sm leading-6 text-slate-300">
-          {shared
-            ? '공용 링크에는 전체 결과가 들어 있어, 링크를 가진 사람을 기술적으로 구분하지 못합니다. 서로 신뢰하는 모임에서만 사용해주세요.'
+          {allResults
+            ? '이 링크에는 전체 결과가 들어 있어, 링크를 가진 사람을 기술적으로 구분하지 못합니다. 서로 신뢰하는 모임에서만 사용해주세요.'
             : '개인 링크에는 이 사람의 결과 하나만 들어 있지만, 링크를 받은 사람은 누구나 그 결과를 볼 수 있습니다.'}
           {' '}링크는 방문 기록·클립보드·공유 대상에 남을 수 있고 만료하거나 회수할 수 없습니다.
         </p>
@@ -118,9 +156,9 @@ function PrivacyNotice({ shared = false }: { shared?: boolean }) {
   );
 }
 
-function LinkPageFrame({ children }: { children: React.ReactNode }) {
+function LinkPageFrame({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="ra-page-shell ra-link-shell">
+    <div className={`ra-page-shell ${wide ? '' : 'ra-link-shell'}`}>
       <div className="ra-brand-lockup" aria-hidden="true">
         <span className="ra-brand-mark">🎭</span>
         <span>역할 뽑기</span>
@@ -141,9 +179,8 @@ export default function RoleAssigner() {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [runtimeError, setRuntimeError] = useState('');
   const [showAllConfirm, setShowAllConfirm] = useState(false);
-  const [showAllResults, setShowAllResults] = useState(false);
-  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
-  const [participantRevealed, setParticipantRevealed] = useState(false);
+  const [pendingParticipantReveal, setPendingParticipantReveal] = useState<Assignment | null>(null);
+  const [revealedParticipantKeys, setRevealedParticipantKeys] = useState<Set<string>>(() => new Set());
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
   const [linkPayload, setLinkPayload] = useState<ResultPayload | null>(null);
   const [invalidLink, setInvalidLink] = useState<InvalidLinkState | null>(null);
@@ -211,16 +248,10 @@ export default function RoleAssigner() {
     inputLimitTimersRef.current.set(field, timer);
   }, []);
 
-  const closeParticipantDialog = useCallback(() => {
-    setParticipantRevealed(false);
-    setSelectedAssignment(null);
-  }, []);
-
   const clearHostRevealState = useCallback(() => {
     setShowAllConfirm(false);
-    setShowAllResults(false);
-    setParticipantRevealed(false);
-    setSelectedAssignment(null);
+    setPendingParticipantReveal(null);
+    setRevealedParticipantKeys(new Set());
   }, []);
 
   const loadHash = useCallback(() => {
@@ -230,7 +261,10 @@ export default function RoleAssigner() {
         setLinkPayload(null);
         setInvalidLink(null);
         setViewState((current) => (
-          current === 'personal-link' || current === 'shared-link' || current === 'invalid-link'
+          current === 'personal-link'
+            || current === 'all-link'
+            || current === 'shared-link'
+            || current === 'invalid-link'
             ? 'setup'
             : current
         ));
@@ -244,7 +278,13 @@ export default function RoleAssigner() {
         setSharedError('');
         setSharedMatch(null);
         setSharedRevealed(false);
-        setViewState(payload.kind === 'personal' ? 'personal-link' : 'shared-link');
+        setViewState(
+          payload.kind === 'personal'
+            ? 'personal-link'
+            : payload.kind === 'all'
+              ? 'all-link'
+              : 'shared-link',
+        );
       }
     } catch (error) {
       clearHostRevealState();
@@ -456,7 +496,7 @@ export default function RoleAssigner() {
     const unavailable: LinkBuildResult = { url: null, error: '링크를 준비하는 중입니다.' };
     const personal = new Map<string, LinkBuildResult>();
     if (!hashChecked || assignments.length === 0 || typeof window === 'undefined') {
-      return { shared: unavailable, personal };
+      return { all: unavailable, shared: unavailable, personal };
     }
 
     const build = (payload: ResultPayload): LinkBuildResult => {
@@ -476,6 +516,7 @@ export default function RoleAssigner() {
       personal.set(createLookupKey(assignment.name), build(createPersonalPayload(mode, assignment)));
     });
     return {
+      all: build(createAllResultsPayload(mode, assignments)),
       shared: build(createSharedPayload(mode, assignments)),
       personal,
     };
@@ -516,6 +557,28 @@ export default function RoleAssigner() {
           <h1 id="invalid-link-title" className="mt-5 text-3xl font-black text-white">{invalidLink.title}</h1>
           <p className="mx-auto mt-3 max-w-lg leading-7 text-slate-300">{invalidLink.message}</p>
           <button type="button" onClick={resetSetup} className="ra-btn-primary mt-8 w-full">
+            새 역할 뽑기
+          </button>
+        </section>
+      </LinkPageFrame>
+    );
+  }
+
+  if (viewState === 'all-link' && linkPayload?.kind === 'all') {
+    const label = resultLabel(linkPayload.mode);
+    return (
+      <LinkPageFrame wide>
+        <section aria-labelledby="all-link-title">
+          <header className="mb-8 text-center">
+            <p className="ra-section-kicker">전체 결과 링크</p>
+            <h1 id="all-link-title" className="mt-2 text-3xl font-black text-white">
+              {label} 전체 결과
+            </h1>
+          </header>
+
+          <PublicResultsGrid assignments={linkPayload.assignments} label={label} />
+          <PrivacyNotice allResults />
+          <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
             새 역할 뽑기
           </button>
         </section>
@@ -577,7 +640,7 @@ export default function RoleAssigner() {
     return (
       <LinkPageFrame>
         <section className="ra-link-panel" aria-labelledby="shared-link-title">
-          <p className="ra-section-kicker">공용 결과 링크</p>
+          <p className="ra-section-kicker">참가자 확인 링크</p>
           <h1 id="shared-link-title" className="mt-2 text-3xl font-black text-white">내 결과 찾기</h1>
           <p className="mt-3 leading-7 text-slate-300">
             배정할 때 사용한 이름을 정확히 입력하세요. 참가자 목록은 표시하지 않습니다.
@@ -643,7 +706,7 @@ export default function RoleAssigner() {
             </div>
           )}
 
-          <PrivacyNotice shared />
+          <PrivacyNotice allResults />
           <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
             새 역할 뽑기
           </button>
@@ -691,6 +754,9 @@ export default function RoleAssigner() {
 
   if (viewState === 'results') {
     const label = resultLabel(mode);
+    const allParticipantResultsRevealed = assignments.length > 0 && assignments.every(
+      (assignment) => revealedParticipantKeys.has(createLookupKey(assignment.name)),
+    );
 
     if (revealMode === 'public') {
       return (
@@ -702,43 +768,13 @@ export default function RoleAssigner() {
             </h1>
           </header>
 
-          <section className={`ra-public-results-grid mb-8 grid gap-3 ${
-            assignments.length <= 4
-              ? 'grid-cols-1'
-              : assignments.length <= 8
-                ? 'grid-cols-1 sm:grid-cols-2'
-                : 'grid-cols-2 sm:grid-cols-3'
-          }`} aria-label="전체 결과">
-            {assignments.map((assignment, index) => (
-              <article
-                key={createLookupKey(assignment.name)}
-                className="relative overflow-hidden rounded-2xl animate-reveal"
-                style={{ animationDelay: `${index * 0.08}s` }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
-                <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${assignments.length > 4 ? 'p-3' : 'p-4'}`}>
-                  <div className="mb-2 flex min-w-0 items-center gap-3">
-                    <span className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-600 font-bold text-white shadow-lg shadow-pink-500/30 ${assignments.length > 4 ? 'h-8 w-8 text-sm' : 'h-10 w-10 text-base'}`} aria-hidden="true">
-                      {[...assignment.name][0]?.toUpperCase() ?? '?'}
-                    </span>
-                    <h2 className={`min-w-0 break-words font-bold text-white ${assignments.length > 4 ? 'text-sm' : 'text-base'}`}>
-                      {assignment.name}
-                    </h2>
-                  </div>
-                  <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${assignments.length > 4 ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
-                    <span className="sr-only">{label}: </span>
-                    <span>{assignment.role}</span>
-                  </p>
-                </div>
-              </article>
-            ))}
-          </section>
+          <PublicResultsGrid assignments={assignments} label={label} />
 
           <div className="ra-public-share mb-4">
             <ShareControl
-              url={shareLinks.shared.url}
-              disabledReason={shareLinks.shared.error}
-              label="결과 링크 복사"
+              url={shareLinks.all.url}
+              disabledReason={shareLinks.all.error}
+              label="전체 결과 링크 복사"
             />
           </div>
 
@@ -749,7 +785,7 @@ export default function RoleAssigner() {
             </p>
           </div>
 
-          <PrivacyNotice shared />
+          <PrivacyNotice allResults />
 
           <div className="mt-7 flex gap-4">
             <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary flex-1">
@@ -791,7 +827,7 @@ export default function RoleAssigner() {
             <p className="ra-section-kicker">배정 완료</p>
             <h1 className="mt-1 text-3xl font-black text-white">{label} 배정이 끝났습니다</h1>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              아직 어떤 결과도 공개하지 않았습니다. 확인할 방법을 선택해주세요.
+              참가자별로 확인하거나 전체 결과를 공개할 수 있습니다.
             </p>
           </div>
         </header>
@@ -807,43 +843,21 @@ export default function RoleAssigner() {
           <button
             type="button"
             onClick={() => {
-              closeParticipantDialog();
-              if (showAllResults) setShowAllResults(false);
+              if (allParticipantResultsRevealed) setRevealedParticipantKeys(new Set());
               else setShowAllConfirm(true);
             }}
+            aria-pressed={allParticipantResultsRevealed}
             className="ra-btn-primary"
           >
-            <span aria-hidden="true">{showAllResults ? '◉' : '◎'}</span>
-            {showAllResults ? '모두 숨기기' : '전체 결과 보기'}
+            <span aria-hidden="true">{allParticipantResultsRevealed ? '◉' : '◎'}</span>
+            {allParticipantResultsRevealed ? '모두 숨기기' : '전체 결과 보기'}
           </button>
           <ShareControl
             url={shareLinks.shared.url}
             disabledReason={shareLinks.shared.error}
-            label="공용 링크 복사"
+            label="참가자 확인 링크 복사"
           />
         </div>
-
-        {showAllResults && (
-          <section className="ra-all-results" aria-labelledby="all-results-title">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="ra-section-kicker">같은 화면에 공개 중</p>
-                <h2 id="all-results-title" className="mt-1 text-xl font-black text-white">전체 결과</h2>
-              </div>
-              <button type="button" onClick={() => setShowAllResults(false)} className="ra-btn-tertiary">
-                모두 숨기기
-              </button>
-            </div>
-            <ul className="mt-5 divide-y divide-slate-700/70">
-              {assignments.map((assignment) => (
-                <li key={createLookupKey(assignment.name)} className="ra-revealed-row">
-                  <span className="break-words font-bold text-slate-200">{assignment.name}</span>
-                  <span className="break-words text-right font-black text-cyan-200">{assignment.role}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
 
         <section className="mt-10" aria-labelledby="participant-results-title">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -855,26 +869,43 @@ export default function RoleAssigner() {
           </div>
           <ul className="ra-participant-results mt-4">
             {assignments.map((assignment) => {
-              const personalLink = shareLinks.personal.get(createLookupKey(assignment.name));
+              const participantKey = createLookupKey(assignment.name);
+              const personalLink = shareLinks.personal.get(participantKey);
+              const participantRevealed = revealedParticipantKeys.has(participantKey);
               return (
-                <li key={createLookupKey(assignment.name)} className="ra-participant-result-row">
+                <li key={participantKey} className="ra-participant-result-row">
                   <div className="ra-participant-identity">
                     <span className="ra-avatar" aria-hidden="true">
                       {[...assignment.name][0]?.toUpperCase() ?? '?'}
                     </span>
-                    <span className="min-w-0 break-words font-black text-white">{assignment.name}</span>
+                    <div className="min-w-0" aria-live="polite">
+                      <span className="break-words font-black text-white">{assignment.name}</span>
+                      {participantRevealed && (
+                        <p className="mt-1 break-words font-black text-cyan-200">
+                          <span className="sr-only">{label}: </span>
+                          <span>{assignment.role}</span>
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <div className="ra-row-actions">
                     <button
                       type="button"
                       onClick={() => {
-                        setShowAllResults(false);
-                        setParticipantRevealed(false);
-                        setSelectedAssignment(assignment);
+                        if (participantRevealed) {
+                          setRevealedParticipantKeys((current) => {
+                            const next = new Set(current);
+                            next.delete(participantKey);
+                            return next;
+                          });
+                        } else {
+                          setPendingParticipantReveal(assignment);
+                        }
                       }}
+                      aria-pressed={participantRevealed}
                       className="ra-btn-tertiary"
                     >
-                      결과 보기
+                      {participantRevealed ? '다시 숨기기' : '결과 보기'}
                     </button>
                     <ShareControl
                       compact
@@ -889,7 +920,7 @@ export default function RoleAssigner() {
           </ul>
         </section>
 
-        <PrivacyNotice shared />
+        <PrivacyNotice allResults />
 
         <div className="ra-bottom-actions">
           <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary">
@@ -913,9 +944,10 @@ export default function RoleAssigner() {
             <button
               type="button"
               onClick={() => {
-                closeParticipantDialog();
                 setShowAllConfirm(false);
-                setShowAllResults(true);
+                setRevealedParticipantKeys(new Set(
+                  assignments.map((assignment) => createLookupKey(assignment.name)),
+                ));
               }}
               className="ra-btn-primary"
             >
@@ -925,39 +957,34 @@ export default function RoleAssigner() {
         </AccessibleDialog>
 
         <AccessibleDialog
-          open={Boolean(selectedAssignment)}
-          onClose={closeParticipantDialog}
-          title={selectedAssignment ? `${selectedAssignment.name}님의 결과` : '참가자 결과'}
-          description="기기를 해당 참가자에게 건넨 뒤 본인이 직접 확인하게 해주세요."
+          open={Boolean(pendingParticipantReveal)}
+          onClose={() => setPendingParticipantReveal(null)}
+          title={pendingParticipantReveal
+            ? `${pendingParticipantReveal.name}님의 결과를 공개할까요?`
+            : '참가자 결과를 공개할까요?'}
+          description="승인하면 이 참가자의 결과가 목록에 표시되고, 다시 숨길 때까지 유지됩니다. 주변 사람이 함께 봐도 괜찮을 때만 계속해주세요."
         >
-          {selectedAssignment && (
-            <div className="ra-secret-stage mt-6">
-              {!participantRevealed ? (
-                <>
-                  <span className="ra-secret-seal" aria-hidden="true">봉인</span>
-                  <p className="break-words text-2xl font-black text-white">{selectedAssignment.name}님</p>
-                  <p className="mt-2 text-sm text-slate-300">본인이라면 아래 버튼을 눌러주세요.</p>
-                  <button
-                    type="button"
-                    onClick={() => setParticipantRevealed(true)}
-                    className="ra-btn-primary mt-5 w-full"
-                  >
-                    {label} 확인하기
-                  </button>
-                </>
-              ) : (
-                <div aria-live="polite">
-                  <p className="text-sm font-bold text-cyan-200">{selectedAssignment.name}님의 {label}</p>
-                  <p className="mt-3 break-words text-3xl font-black leading-tight text-white">
-                    {selectedAssignment.role}
-                  </p>
-                  <button type="button" onClick={closeParticipantDialog} className="ra-btn-secondary mt-6 w-full">
-                    확인 완료
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          <div className="ra-dialog-actions">
+            <button
+              type="button"
+              onClick={() => setPendingParticipantReveal(null)}
+              className="ra-btn-secondary"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!pendingParticipantReveal) return;
+                const participantKey = createLookupKey(pendingParticipantReveal.name);
+                setRevealedParticipantKeys((current) => new Set(current).add(participantKey));
+                setPendingParticipantReveal(null);
+              }}
+              className="ra-btn-primary"
+            >
+              결과 공개
+            </button>
+          </div>
         </AccessibleDialog>
 
         <AccessibleDialog
@@ -1459,7 +1486,7 @@ export default function RoleAssigner() {
           </h3>
           <ul className="space-y-2 text-slate-300">
             <li>🤫 숨김 공개 - 한 기기에서 한 명씩 몰래 확인</li>
-            <li>🔗 결과 링크 - 개인 또는 공용 링크로 전달</li>
+            <li>🔗 결과 링크 - 개인·전체 결과·참가자 확인 링크 복사</li>
             <li>🎯 스마트 자동 배정 - 0명 역할에 나머지 인원 배정</li>
           </ul>
         </div>
@@ -1474,7 +1501,7 @@ export default function RoleAssigner() {
             </div>
             <div className="rounded-xl bg-slate-700/50 p-3">
               <p className="mb-1 font-medium text-pink-400">🤫 개별 공개</p>
-              <p className="text-sm text-slate-400">서버 연결 없이 결과를 숨기고, 한 명씩 확인하거나 링크로 공유합니다.</p>
+              <p className="text-sm text-slate-400">서버 연결 없이 필요한 참가자만 공개하거나 확인 링크를 복사합니다.</p>
             </div>
           </div>
         </div>

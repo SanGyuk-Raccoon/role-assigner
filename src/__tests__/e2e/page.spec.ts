@@ -142,12 +142,21 @@ test.describe('브라우저 전용 배정 흐름', () => {
     )).toBe('none');
   });
 
-  test('전체 공개는 배정 직후 모든 결과를 기존 카드 흐름으로 표시한다', async ({ page }) => {
+  test('전체 공개는 결과를 바로 표시하고 복사한 링크도 모든 결과를 즉시 연다', async ({ page, context }) => {
     await assignGeneralRoles(page, ['Alice', '철수'], '시민', 'public');
     await expect(page.locator('.ra-public-results-grid')).toBeVisible();
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '결과 링크 복사' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '전체 결과 링크 복사' })).toBeVisible();
+
+    const url = await copyShareLink(page, page.locator('.ra-public-share'));
+    const receiver = await context.newPage();
+    await receiver.goto(url);
+    await expect(receiver.getByRole('heading', { name: '역할 전체 결과' })).toBeVisible();
+    await expect(receiver.getByText('시민', { exact: true })).toHaveCount(2);
+    await expect(receiver.getByLabel('참가자 이름')).toHaveCount(0);
+    await receiver.reload();
+    await expect(receiver.getByText('시민', { exact: true })).toHaveCount(2);
   });
 
   test('정규화 중복 오류를 입력에 연결하고 첫 오류로 초점을 이동한다', async ({ page }) => {
@@ -164,36 +173,54 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByText(/이름이 중복됩니다/u)).toBeVisible();
   });
 
-  test('배정 직후 역할은 DOM에 없고 참가자 확인 뒤 다시 제거된다', async ({ page }) => {
+  test('참가자별 승인 결과는 목록에 누적되고 다시 숨긴 행만 제거된다', async ({ page }) => {
     await assignGeneralRoles(page);
     await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
 
-    const row = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
-    const opener = row.getByRole('button', { name: '결과 보기' });
-    await opener.click();
+    const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
+    const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });
+    await aliceRow.getByRole('button', { name: '결과 보기' }).click();
 
-    const dialog = page.getByRole('dialog', { name: 'Alice님의 결과' });
+    const dialog = page.getByRole('dialog', { name: 'Alice님의 결과를 공개할까요?' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('시민', { exact: true })).toHaveCount(0);
-    await dialog.getByRole('button', { name: '역할 확인하기' }).click();
-    await expect(dialog.getByText('시민', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: '확인 완료' }).click();
-
+    await dialog.getByRole('button', { name: '결과 공개' }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
-    await expect(opener).toBeFocused();
+    await expect(aliceRow.getByText('시민', { exact: true })).toBeVisible();
+    await expect(aliceRow.getByRole('button', { name: '다시 숨기기' })).toBeFocused();
+
+    await otherRow.getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '취소' }).click();
+    await expect(aliceRow.getByText('시민', { exact: true })).toBeVisible();
+    await expect(otherRow.getByText('시민', { exact: true })).toHaveCount(0);
+
+    await otherRow.getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '결과 공개' }).click();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
+
+    await aliceRow.getByRole('button', { name: '다시 숨기기' }).click();
+    await expect(aliceRow.getByText('시민', { exact: true })).toHaveCount(0);
+    await expect(otherRow.getByText('시민', { exact: true })).toBeVisible();
   });
 
-  test('전체 결과 확인은 확인 dialog를 거치고 즉시 모두 숨길 수 있다', async ({ page }) => {
+  test('전체 결과는 기존 목록을 모두 공개하고 개별·전체 숨기기를 지원한다', async ({ page }) => {
     await assignGeneralRoles(page);
     await page.getByRole('button', { name: '전체 결과 보기' }).click();
     const dialog = page.getByRole('dialog', { name: '전체 결과를 공개할까요?' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: '전체 결과 공개' }).click();
 
-    await expect(page.getByRole('heading', { name: '전체 결과' })).toBeVisible();
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
-    await page.getByRole('button', { name: '모두 숨기기' }).first().click();
+    await expect(page.locator('.ra-participant-result-row').getByRole('button', { name: '다시 숨기기' })).toHaveCount(2);
+
+    await page.locator('.ra-participant-result-row').first().getByRole('button', { name: '다시 숨기기' }).click();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '전체 결과 보기' })).toBeVisible();
+
+    await page.getByRole('button', { name: '전체 결과 보기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '전체 결과 공개' }).click();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
+    await page.getByRole('button', { name: '모두 숨기기' }).click();
     await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
   });
 
@@ -226,7 +253,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(receiver).toHaveURL(/\/role-assigner$/u);
   });
 
-  test('공용 링크는 목록 없이 NFKC·소문자 정규화한 정확한 이름만 찾는다', async ({ page, context }) => {
+  test('참가자 확인 링크는 목록 없이 NFKC·소문자 정규화한 정확한 이름만 찾는다', async ({ page, context }) => {
     await assignGeneralRoles(page);
     const url = await copyShareLink(page, page.locator('.ra-result-actions'));
 
@@ -259,11 +286,11 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await row.getByRole('button', { name: '결과 보기' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('B', { exact: true })).toHaveCount(0);
-    await dialog.getByRole('button', { name: '마니또 확인하기' }).click();
-    await expect(dialog.getByText('B', { exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: '결과 공개' }).click();
+    await expect(row.getByText('B', { exact: true })).toBeVisible();
   });
 
-  test('배정 과정에서 API·데이터베이스 요청을 보내지 않는다', async ({ page }) => {
+  test('배정과 개별 결과 공개 과정에서 API·데이터베이스 요청을 보내지 않는다', async ({ page }) => {
     const roleDataRequests: string[] = [];
     let monitoring = false;
     page.on('request', (request) => {
@@ -280,6 +307,9 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+    await page.locator('.ra-participant-result-row').first().getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '결과 공개' }).click();
+    await expect(page.getByText('시민', { exact: true })).toHaveCount(1);
     expect(roleDataRequests).toEqual([]);
   });
 
@@ -293,7 +323,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
     await assignGeneralRoles(page);
     const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
     await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/#result=/u);
   });
@@ -316,7 +346,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
     await assignGeneralRoles(page);
     const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
     await expect(scope.getByText(/클립보드 권한/u)).toBeVisible();
     const manual = scope.getByLabel('직접 복사할 결과 링크');
     await expect(manual).toBeVisible();
@@ -331,7 +361,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
     await assignGeneralRoles(page);
     const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
     await expect(scope.getByText(/지원하지 않는 브라우저/u)).toBeVisible();
     await expect(scope.getByLabel('직접 복사할 결과 링크')).toBeFocused();
   });
@@ -400,6 +430,8 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
+    await page.locator('.ra-participant-result-row').first().getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '결과 공개' }).click();
     const resultOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(resultOverflow).toBeLessThanOrEqual(0);
     const resultA11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();

@@ -4,6 +4,7 @@ import {
   PayloadError,
   RESULT_PAYLOAD_VERSION,
   buildResultUrl,
+  createAllResultsPayload,
   createPersonalPayload,
   createSharedPayload,
   decodeResultPayload,
@@ -32,11 +33,16 @@ describe('결과 링크 codec', () => {
     expect(decodeResultPayload(encoded)).toEqual(payload);
   });
 
-  it('공용 payload를 왕복하고 각 참가자를 정확히 한 번 보존한다', () => {
-    const payload = createSharedPayload('role', assignments);
-    const decoded = decodeResultPayload(encodeResultPayload(payload));
-    expect(decoded).toEqual(payload);
-    expect(decoded.kind === 'shared' && new Set(decoded.assignments.map((item) => item.name)).size).toBe(2);
+  it('전체 결과와 참가자 확인 payload를 다른 종류로 왕복한다', () => {
+    const allPayload = createAllResultsPayload('role', assignments);
+    const sharedPayload = createSharedPayload('role', assignments);
+
+    expect(decodeResultPayload(encodeResultPayload(allPayload))).toEqual(allPayload);
+    expect(decodeResultPayload(encodeResultPayload(sharedPayload))).toEqual(sharedPayload);
+    expect(allPayload.kind).toBe('all');
+    expect(sharedPayload.kind).toBe('shared');
+    expect(new Set(allPayload.assignments.map((item) => item.name)).size).toBe(2);
+    expect(new Set(sharedPayload.assignments.map((item) => item.name)).size).toBe(2);
   });
 
   it('개인 payload에는 한 참가자의 결과 외 다른 데이터가 없다', () => {
@@ -63,8 +69,10 @@ describe('결과 링크 codec', () => {
       name: `${'😀'.repeat(19)}${String.fromCodePoint(0x1f600 + index)}`,
       role: '🂠'.repeat(30),
     }));
-    const encoded = encodeResultPayload(createSharedPayload('role', worst));
-    expect(encoded.length).toBeLessThanOrEqual(MAX_ENCODED_PAYLOAD_LENGTH);
+    expect(encodeResultPayload(createAllResultsPayload('role', worst)).length)
+      .toBeLessThanOrEqual(MAX_ENCODED_PAYLOAD_LENGTH);
+    expect(encodeResultPayload(createSharedPayload('role', worst)).length)
+      .toBeLessThanOrEqual(MAX_ENCODED_PAYLOAD_LENGTH);
   });
 
   it('8,192자 경계는 허용하고 8,193자는 디코딩 전에 거부한다', () => {
@@ -113,10 +121,10 @@ describe('엄격한 payload 검증', () => {
     );
   });
 
-  it('중복 정규화 이름과 20명 초과 공용 payload를 거부한다', () => {
+  it('중복 정규화 이름과 20명 초과 전체 결과 payload를 거부한다', () => {
     expect(() => validateResultPayload({
       v: 1,
-      kind: 'shared',
+      kind: 'all',
       mode: 'role',
       assignments: [
         { name: 'Alice', role: 'A' },
@@ -132,13 +140,15 @@ describe('엄격한 payload 검증', () => {
     })).toThrowError(expect.objectContaining<Partial<PayloadError>>({ code: 'invalid-schema' }));
   });
 
-  it('마니또 공용 payload는 같은 참가자 집합의 단일 순환만 허용한다', () => {
+  it('마니또 전체 데이터 payload는 같은 참가자 집합의 단일 순환만 허용한다', () => {
     const valid = createSharedPayload('manito', [
       { name: 'A', role: 'B' },
       { name: 'B', role: 'C' },
       { name: 'C', role: 'A' },
     ]);
     expect(decodeResultPayload(encodeResultPayload(valid))).toEqual(valid);
+    expect(decodeResultPayload(encodeResultPayload(createAllResultsPayload('manito', valid.assignments))))
+      .toEqual(expect.objectContaining({ kind: 'all', assignments: valid.assignments }));
     expect(() => validateResultPayload({
       v: 1,
       kind: 'shared',
