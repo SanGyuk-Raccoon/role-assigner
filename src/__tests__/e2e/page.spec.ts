@@ -64,6 +64,10 @@ test.describe('브라우저 전용 배정 흐름', () => {
     const participantHeading = page.getByRole('heading', { name: /참가자/u });
     const participantHeadingBefore = await participantHeading.boundingBox();
     const individualGuide = page.locator('.ra-guide-individual');
+    await expect(page.getByRole('heading', { name: '만든 이유' })).toHaveCount(0);
+    await expect(page.getByText('팁', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '주요 기능' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '사용 방법' })).toBeVisible();
     await expect(page.locator('.ra-reveal-description')).toHaveCount(0);
     await expect(individualGuide).toBeVisible();
     await expect(individualGuide).toContainText('전체 결과 링크');

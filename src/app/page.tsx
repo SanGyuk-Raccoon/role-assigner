@@ -1442,17 +1442,9 @@ export default function RoleAssigner() {
 
       <section className="ra-guide" aria-labelledby="guide-title">
         <div>
-          <h2 id="guide-title" className="mb-2 flex items-center gap-2 text-lg font-bold text-white">
-            <span aria-hidden="true">💭</span> 만든 이유
-          </h2>
-          <p className="leading-relaxed text-slate-300">
-            마피아 게임할 때 역할 정하기가 너무 귀찮았어요. 쪽지 쓰고, 접고, 섞고... 이제 폰 하나로 역할 배정을 끝낼 수 있습니다.
-          </p>
-        </div>
-        <div>
-          <h3 className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
+          <h2 id="guide-title" className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
             <span aria-hidden="true">✨</span> 주요 기능
-          </h3>
+          </h2>
           <ul className="space-y-2 text-slate-300">
             <li>🤫 숨김 공개 - 한 기기에서 한 명씩 몰래 확인</li>
             <li>🔗 결과 링크 - 전체 결과·개별 결과 링크 복사</li>
@@ -1488,12 +1480,6 @@ export default function RoleAssigner() {
               </dl>
             </div>
           </div>
-        </div>
-        <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
-          <p className="mb-1 font-medium text-cyan-400">💡 팁</p>
-          <p className="text-sm text-cyan-300/80">
-            결과는 서버나 데이터베이스에 저장되지 않습니다. 공유한 링크는 만료하거나 회수할 수 없습니다.
-          </p>
         </div>
       </section>
     </div>
