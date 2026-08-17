@@ -553,7 +553,7 @@ export default function RoleAssigner() {
       <LinkPageFrame wide>
         <section aria-labelledby="all-link-title">
           <header className="mb-8 text-center">
-            <p className="ra-section-kicker">전체 결과 링크</p>
+            <p className="ra-section-kicker">결과 링크</p>
             <h1 id="all-link-title" className="mt-2 text-3xl font-black text-white">
               {label} 전체 결과
             </h1>
@@ -573,7 +573,7 @@ export default function RoleAssigner() {
     return (
       <LinkPageFrame>
         <section className="ra-link-panel" aria-labelledby="personal-link-title">
-          <p className="ra-section-kicker">개인 결과 링크</p>
+          <p className="ra-section-kicker">개별 결과 링크</p>
           <h1 id="personal-link-title" className="mt-2 break-words text-3xl font-black text-white">
             {linkPayload.assignment.name}님께 전달된 결과
           </h1>
@@ -621,10 +621,10 @@ export default function RoleAssigner() {
     return (
       <LinkPageFrame>
         <section className="ra-link-panel" aria-labelledby="shared-link-title">
-          <p className="ra-section-kicker">참가자 확인 링크</p>
+          <p className="ra-section-kicker">전체 결과 링크</p>
           <h1 id="shared-link-title" className="mt-2 text-3xl font-black text-white">내 결과 찾기</h1>
           <p className="mt-3 leading-7 text-slate-300">
-            배정할 때 사용한 이름을 정확히 입력하세요. 참가자 목록은 표시하지 않습니다.
+            배정할 때 사용한 이름을 정확히 입력하세요.
           </p>
 
           {!sharedMatch ? (
@@ -754,7 +754,7 @@ export default function RoleAssigner() {
             <ShareControl
               url={shareLinks.all.url}
               disabledReason={shareLinks.all.error}
-              label="전체 결과 링크 복사"
+              label="결과 링크 복사"
             />
           </div>
 
@@ -816,12 +816,22 @@ export default function RoleAssigner() {
             <span aria-hidden="true">{allParticipantResultsRevealed ? '◉' : '◎'}</span>
             {allParticipantResultsRevealed ? '모두 숨기기' : '전체 결과 보기'}
           </button>
+        </div>
+
+        <section className="ra-shared-result-link" aria-labelledby="shared-result-link-title">
+          <h2 id="shared-result-link-title" className="text-base font-black text-white">
+            전체 결과 링크
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-slate-300">
+            모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
+            다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.
+          </p>
           <ShareControl
             url={shareLinks.shared.url}
             disabledReason={shareLinks.shared.error}
-            label="참가자 확인 링크 복사"
+            label="전체 결과 링크 복사"
           />
-        </div>
+        </section>
 
         <section className="mt-10" aria-labelledby="participant-results-title">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -871,8 +881,8 @@ export default function RoleAssigner() {
                     <ShareControl
                       compact
                       url={personalLink?.url ?? null}
-                      disabledReason={personalLink?.error ?? '개인 링크를 준비하지 못했습니다.'}
-                      label="개인 링크 복사"
+                      disabledReason={personalLink?.error ?? '개별 결과 링크를 준비하지 못했습니다.'}
+                      label="개별 결과 링크 복사"
                     />
                   </div>
                 </li>
@@ -984,7 +994,11 @@ export default function RoleAssigner() {
         </p>
       </header>
 
-      <div className="ra-reveal-switch" role="radiogroup" aria-label="공개 방식">
+      <div
+        className={`ra-reveal-switch ${revealMode === 'individual' ? 'ra-reveal-switch-with-description' : ''}`}
+        role="radiogroup"
+        aria-label="공개 방식"
+      >
         <button
           type="button"
           role="radio"
@@ -1007,8 +1021,26 @@ export default function RoleAssigner() {
       <p className="sr-only" aria-live="polite">
         {revealMode === 'public'
           ? '배정이 끝나면 모든 결과를 한 화면에 바로 표시합니다.'
-          : '서버 연결 없이 배정하고, 모든 결과를 숨긴 상태에서 한 명씩 확인합니다.'}
+          : '모든 결과를 숨긴 상태에서 필요한 참가자만 확인합니다.'}
       </p>
+      {revealMode === 'individual' && (
+        <div className="ra-reveal-description">
+          <p>모든 결과를 숨긴 상태에서 필요한 참가자만 확인합니다.</p>
+          <dl className="ra-reveal-link-details">
+            <div>
+              <dt>전체 결과 링크</dt>
+              <dd>
+                모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
+                다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.
+              </dd>
+            </div>
+            <div>
+              <dt>개별 결과 링크</dt>
+              <dd>해당 참가자의 결과만 확인할 수 있습니다.</dd>
+            </div>
+          </dl>
+        </div>
+      )}
 
       <form onSubmit={handleAssign} noValidate>
         <section
@@ -1445,7 +1477,7 @@ export default function RoleAssigner() {
           </h3>
           <ul className="space-y-2 text-slate-300">
             <li>🤫 숨김 공개 - 한 기기에서 한 명씩 몰래 확인</li>
-            <li>🔗 결과 링크 - 개인·전체 결과·참가자 확인 링크 복사</li>
+            <li>🔗 결과 링크 - 전체 결과·개별 결과 링크 복사</li>
             <li>🎯 스마트 자동 배정 - 0명 역할에 나머지 인원 배정</li>
           </ul>
         </div>
@@ -1460,7 +1492,7 @@ export default function RoleAssigner() {
             </div>
             <div className="rounded-xl bg-slate-700/50 p-3">
               <p className="mb-1 font-medium text-pink-400">🤫 개별 공개</p>
-              <p className="text-sm text-slate-400">서버 연결 없이 필요한 참가자만 공개하거나 확인 링크를 복사합니다.</p>
+              <p className="text-sm text-slate-400">필요한 참가자만 공개하고 전체 결과 또는 개별 결과 링크를 복사합니다.</p>
             </div>
           </div>
         </div>

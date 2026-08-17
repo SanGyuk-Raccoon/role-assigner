@@ -27,8 +27,11 @@ async function assignGeneralRoles(
 }
 
 async function copyShareLink(page: Page, scope: ReturnType<Page['locator']>): Promise<string> {
-  await scope.getByRole('button', { name: /링크 복사/u }).click();
-  await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
+  const copyButton = scope.locator('.ra-share-buttons button');
+  await expect(copyButton).toHaveAccessibleName(/링크 복사/u);
+  await copyButton.click();
+  await expect(copyButton).toHaveAccessibleName('복사 완료');
+  await expect(copyButton).toContainText('✓ 복사 완료');
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
@@ -36,6 +39,7 @@ async function expectResultOnlyCopy(page: Page) {
   await expect(page.getByText('전체 결과는 이 브라우저 메모리에만 있습니다.', { exact: false })).toHaveCount(0);
   await expect(page.getByText('링크는 암호화되거나 잠기지 않습니다.', { exact: false })).toHaveCount(0);
   await expect(page.getByText('한 명씩 건네보기', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('참가자 목록은 표시하지 않습니다.', { exact: true })).toHaveCount(0);
 }
 
 test.describe('브라우저 전용 배정 흐름', () => {
@@ -56,6 +60,13 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByRole('radio', { name: '개별 공개' })).toBeVisible();
     await expect(page.getByText('0명', { exact: true })).toBeVisible();
     await expect(page.getByText(/남은 \d+자|\d+\/80B/u)).toHaveCount(0);
+
+    await page.getByRole('radio', { name: '개별 공개' }).click();
+    const revealDescription = page.locator('.ra-reveal-description');
+    await expect(revealDescription).toContainText('전체 결과 링크');
+    await expect(revealDescription).toContainText('다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.');
+    await expect(revealDescription).toContainText('개별 결과 링크');
+    await expect(revealDescription).toContainText('해당 참가자의 결과만 확인할 수 있습니다.');
 
     const manitoToggle = page.getByRole('switch', { name: '마니또 모드' });
     const manitoTrack = manitoToggle.locator('span[aria-hidden="true"]').last();
@@ -153,7 +164,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.locator('.ra-public-results-grid')).toBeVisible();
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '전체 결과 링크 복사' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '결과 링크 복사' })).toBeVisible();
     await expectResultOnlyCopy(page);
 
     const url = await copyShareLink(page, page.locator('.ra-public-share'));
@@ -214,6 +225,19 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
   test('전체 결과는 기존 목록을 모두 공개하고 개별·전체 숨기기를 지원한다', async ({ page }) => {
     await assignGeneralRoles(page);
+    const resultActions = page.locator('.ra-result-actions');
+    const sharedResultLink = page.locator('.ra-shared-result-link');
+    await expect(resultActions.getByRole('button', { name: /링크 복사/u })).toHaveCount(0);
+    await expect(sharedResultLink.getByRole('heading', { name: '전체 결과 링크' })).toBeVisible();
+    await expect(sharedResultLink).toContainText('다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.');
+    const [showAllBox, sharedLinkBox] = await Promise.all([
+      page.getByRole('button', { name: '전체 결과 보기' }).boundingBox(),
+      sharedResultLink.boundingBox(),
+    ]);
+    expect(showAllBox).not.toBeNull();
+    expect(sharedLinkBox).not.toBeNull();
+    expect(sharedLinkBox!.y).toBeGreaterThanOrEqual(showAllBox!.y + showAllBox!.height);
+
     await page.getByRole('button', { name: '전체 결과 보기' }).click();
     const dialog = page.getByRole('dialog', { name: '전체 결과를 공개할까요?' });
     await expect(dialog).toBeVisible();
@@ -244,7 +268,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(opener).toBeFocused();
   });
 
-  test('개인 링크에는 해당 참가자만 있고 새로고침 뒤에도 봉인 상태로 복원된다', async ({ page, context }) => {
+  test('개별 결과 링크에는 해당 참가자만 있고 새로고침 뒤에도 봉인 상태로 복원된다', async ({ page, context }) => {
     await assignGeneralRoles(page);
     const row = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
     const url = await copyShareLink(page, row);
@@ -263,9 +287,9 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(receiver).toHaveURL(/\/role-assigner$/u);
   });
 
-  test('참가자 확인 링크는 목록 없이 NFKC·소문자 정규화한 정확한 이름만 찾는다', async ({ page, context }) => {
+  test('전체 결과 링크는 목록 없이 NFKC·소문자 정규화한 이름으로 한 명씩 찾는다', async ({ page, context }) => {
     await assignGeneralRoles(page);
-    const url = await copyShareLink(page, page.locator('.ra-result-actions'));
+    const url = await copyShareLink(page, page.locator('.ra-shared-result-link'));
 
     const receiver = await context.newPage();
     await receiver.goto(url);
@@ -333,19 +357,43 @@ test.describe('브라우저 전용 배정 흐름', () => {
       });
     });
     await assignGeneralRoles(page);
-    const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
-    await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
+    const scope = page.locator('.ra-shared-result-link');
+    await scope.getByRole('button', { name: '전체 결과 링크 복사' }).click();
+    await expect(scope.getByRole('button', { name: '복사 완료' })).toContainText('✓ 복사 완료');
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/#result=/u);
   });
 
-  test('링크 복사 성공을 참가자 행과 섞이지 않는 상태로 알린다', async ({ page }) => {
+  test('링크 복사 성공은 버튼 크기를 유지하고 참가자별로 2초 뒤 복구된다', async ({ page }) => {
     await assignGeneralRoles(page);
     const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
     const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });
-    await aliceRow.getByRole('button', { name: '개인 링크 복사' }).click();
-    await expect(aliceRow.getByText('링크를 복사했습니다.')).toBeVisible();
-    await expect(otherRow.getByText('링크를 복사했습니다.')).toHaveCount(0);
+    const aliceCopy = aliceRow.locator('.ra-share-buttons button');
+    const otherCopy = otherRow.locator('.ra-share-buttons button');
+    const [buttonBefore, rowBefore] = await Promise.all([
+      aliceCopy.boundingBox(),
+      aliceRow.boundingBox(),
+    ]);
+    expect(buttonBefore).not.toBeNull();
+    expect(rowBefore).not.toBeNull();
+
+    await aliceCopy.click();
+    await expect(aliceCopy).toHaveAccessibleName('복사 완료');
+    await expect(aliceCopy).toContainText('✓ 복사 완료');
+    await expect(aliceRow.locator('.ra-live-message')).toHaveCount(0);
+    await expect(otherCopy).toHaveAccessibleName('개별 결과 링크 복사');
+
+    const [buttonAfter, rowAfter] = await Promise.all([
+      aliceCopy.boundingBox(),
+      aliceRow.boundingBox(),
+    ]);
+    expect(buttonAfter).not.toBeNull();
+    expect(rowAfter).not.toBeNull();
+    expect(buttonAfter!.width).toBe(buttonBefore!.width);
+    expect(buttonAfter!.height).toBe(buttonBefore!.height);
+    expect(rowAfter!.height).toBe(rowBefore!.height);
+
+    await expect(aliceCopy).toHaveAccessibleName('개별 결과 링크 복사', { timeout: 3_000 });
+    await expect(aliceCopy).toContainText('개별 결과 링크 복사');
   });
 
   test('클립보드 쓰기 실패 시 결과 링크를 선택해 수동 복사할 수 있다', async ({ page }) => {
@@ -356,8 +404,8 @@ test.describe('브라우저 전용 배정 흐름', () => {
       });
     });
     await assignGeneralRoles(page);
-    const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
+    const scope = page.locator('.ra-shared-result-link');
+    await scope.getByRole('button', { name: '전체 결과 링크 복사' }).click();
     await expect(scope.getByText(/클립보드 권한/u)).toBeVisible();
     const manual = scope.getByLabel('직접 복사할 결과 링크');
     await expect(manual).toBeVisible();
@@ -371,8 +419,8 @@ test.describe('브라우저 전용 배정 흐름', () => {
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
     });
     await assignGeneralRoles(page);
-    const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '참가자 확인 링크 복사' }).click();
+    const scope = page.locator('.ra-shared-result-link');
+    await scope.getByRole('button', { name: '전체 결과 링크 복사' }).click();
     await expect(scope.getByText(/지원하지 않는 브라우저/u)).toBeVisible();
     await expect(scope.getByLabel('직접 복사할 결과 링크')).toBeFocused();
   });
@@ -397,7 +445,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
   test('새 게임 뒤 만든 링크와 이전 링크가 각자의 결과를 계속 보여준다', async ({ page, context }) => {
     await assignGeneralRoles(page, ['Alice', '철수'], '이전 역할');
-    const oldUrl = await copyShareLink(page, page.locator('.ra-result-actions'));
+    const oldUrl = await copyShareLink(page, page.locator('.ra-shared-result-link'));
 
     await page.getByRole('button', { name: '다시 배정' }).click();
     await expect(page.getByRole('dialog')).toContainText('이전 결과를 계속 보여줍니다');
@@ -412,7 +460,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await page.getByLabel('인원', { exact: true }).fill('0');
     await page.getByRole('button', { name: '역할 배정하기' }).click();
     await expect(page.getByRole('heading', { name: '역할 배정이 끝났습니다' })).toBeVisible();
-    const newUrl = await copyShareLink(page, page.locator('.ra-result-actions'));
+    const newUrl = await copyShareLink(page, page.locator('.ra-shared-result-link'));
     expect(newUrl).not.toBe(oldUrl);
 
     for (const [url, expectedRole] of [[oldUrl, '이전 역할'], [newUrl, '새 역할']] as const) {

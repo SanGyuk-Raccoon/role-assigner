@@ -38,12 +38,36 @@
     @apply mx-auto mb-8 flex w-fit rounded-2xl bg-gradient-to-r from-slate-800 to-slate-900 p-1.5 shadow-xl;
   }
 
+  .ra-reveal-switch-with-description {
+    @apply mb-4;
+  }
+
   .ra-reveal-option {
     @apply min-h-11 rounded-xl px-6 py-3 text-sm font-bold text-slate-400 transition-all duration-300 hover:text-white;
   }
 
   .ra-reveal-option-active {
     @apply bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-lg shadow-pink-500/30;
+  }
+
+  .ra-reveal-description {
+    @apply mx-auto mb-8 max-w-xl text-center text-sm leading-6 text-slate-300;
+  }
+
+  .ra-reveal-link-details {
+    @apply mt-3 space-y-2 text-left;
+  }
+
+  .ra-reveal-link-details > div {
+    @apply grid gap-0.5 sm:grid-cols-[8rem_1fr] sm:gap-3;
+  }
+
+  .ra-reveal-link-details dt {
+    @apply font-black text-pink-300;
+  }
+
+  .ra-reveal-link-details dd {
+    @apply text-slate-300;
   }
 
   .ra-section-kicker {
@@ -174,11 +198,23 @@
   }
 
   .ra-result-actions {
-    @apply mt-7 grid grid-cols-2 items-start gap-3;
+    @apply mt-7;
   }
 
   .ra-result-actions > *,
   .ra-result-actions .ra-share-buttons > * {
+    @apply w-full;
+  }
+
+  .ra-shared-result-link {
+    @apply mt-5 border-t border-slate-800/60 pt-5;
+  }
+
+  .ra-shared-result-link .ra-share-control {
+    @apply mt-3 w-full;
+  }
+
+  .ra-shared-result-link .ra-share-buttons > * {
     @apply w-full;
   }
 
@@ -208,6 +244,14 @@
 
   .ra-share-buttons {
     @apply flex flex-wrap gap-2;
+  }
+
+  .ra-copy-button-content {
+    @apply grid min-w-0 items-center justify-items-center;
+  }
+
+  .ra-copy-button-content > span {
+    @apply col-start-1 row-start-1 inline-flex items-center justify-center gap-2;
   }
 
   .ra-live-message {
@@ -297,7 +341,6 @@
 }
 
 @media (max-width: 520px) {
-  .ra-result-actions,
   .ra-bottom-actions,
   .ra-dialog-actions {
     @apply grid-cols-1;
