@@ -139,23 +139,6 @@ function PublicResultsGrid({ assignments, label }: { assignments: Assignment[]; 
   );
 }
 
-function PrivacyNotice({ allResults = false }: { allResults?: boolean }) {
-  return (
-    <div className="ra-privacy-note">
-      <span className="ra-privacy-icon" aria-hidden="true">⌁</span>
-      <div>
-        <p className="font-bold text-slate-100">링크는 암호화되거나 잠기지 않습니다.</p>
-        <p className="mt-1 text-sm leading-6 text-slate-300">
-          {allResults
-            ? '이 링크에는 전체 결과가 들어 있어, 링크를 가진 사람을 기술적으로 구분하지 못합니다. 서로 신뢰하는 모임에서만 사용해주세요.'
-            : '개인 링크에는 이 사람의 결과 하나만 들어 있지만, 링크를 받은 사람은 누구나 그 결과를 볼 수 있습니다.'}
-          {' '}링크는 방문 기록·클립보드·공유 대상에 남을 수 있고 만료하거나 회수할 수 없습니다.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function LinkPageFrame({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
     <div className={`ra-page-shell ${wide ? '' : 'ra-link-shell'}`}>
@@ -577,7 +560,6 @@ export default function RoleAssigner() {
           </header>
 
           <PublicResultsGrid assignments={linkPayload.assignments} label={label} />
-          <PrivacyNotice allResults />
           <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
             새 역할 뽑기
           </button>
@@ -626,7 +608,6 @@ export default function RoleAssigner() {
             )}
           </div>
 
-          <PrivacyNotice />
           <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
             새 역할 뽑기
           </button>
@@ -706,7 +687,6 @@ export default function RoleAssigner() {
             </div>
           )}
 
-          <PrivacyNotice allResults />
           <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
             새 역할 뽑기
           </button>
@@ -778,15 +758,6 @@ export default function RoleAssigner() {
             />
           </div>
 
-          <div className="ra-memory-warning" role="note">
-            <span aria-hidden="true">⌛</span>
-            <p>
-              전체 결과는 이 브라우저 메모리에만 있습니다. 새로고침하거나 페이지를 떠나면 복구할 수 없습니다.
-            </p>
-          </div>
-
-          <PrivacyNotice allResults />
-
           <div className="mt-7 flex gap-4">
             <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary flex-1">
               <span aria-hidden="true">🔄</span>
@@ -832,13 +803,6 @@ export default function RoleAssigner() {
           </div>
         </header>
 
-        <div className="ra-memory-warning" role="note">
-          <span aria-hidden="true">⌛</span>
-          <p>
-            전체 결과는 이 브라우저 메모리에만 있습니다. 새로고침하거나 페이지를 떠나면 복구할 수 없습니다.
-          </p>
-        </div>
-
         <div className="ra-result-actions">
           <button
             type="button"
@@ -861,10 +825,7 @@ export default function RoleAssigner() {
 
         <section className="mt-10" aria-labelledby="participant-results-title">
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="ra-section-kicker">한 명씩 건네보기</p>
-              <h2 id="participant-results-title" className="mt-1 text-xl font-black text-white">참가자 결과</h2>
-            </div>
+            <h2 id="participant-results-title" className="text-xl font-black text-white">참가자 결과</h2>
             <span className="text-sm font-bold text-pink-200">{assignments.length}명</span>
           </div>
           <ul className="ra-participant-results mt-4">
@@ -919,8 +880,6 @@ export default function RoleAssigner() {
             })}
           </ul>
         </section>
-
-        <PrivacyNotice allResults />
 
         <div className="ra-bottom-actions">
           <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary">

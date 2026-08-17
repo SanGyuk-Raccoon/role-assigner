@@ -32,6 +32,12 @@ async function copyShareLink(page: Page, scope: ReturnType<Page['locator']>): Pr
   return page.evaluate(() => navigator.clipboard.readText());
 }
 
+async function expectResultOnlyCopy(page: Page) {
+  await expect(page.getByText('전체 결과는 이 브라우저 메모리에만 있습니다.', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('링크는 암호화되거나 잠기지 않습니다.', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('한 명씩 건네보기', { exact: true })).toHaveCount(0);
+}
+
 test.describe('브라우저 전용 배정 흐름', () => {
   test.beforeEach(async ({ context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
@@ -148,6 +154,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '전체 결과 링크 복사' })).toBeVisible();
+    await expectResultOnlyCopy(page);
 
     const url = await copyShareLink(page, page.locator('.ra-public-share'));
     const receiver = await context.newPage();
@@ -155,6 +162,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(receiver.getByRole('heading', { name: '역할 전체 결과' })).toBeVisible();
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(receiver.getByLabel('참가자 이름')).toHaveCount(0);
+    await expectResultOnlyCopy(receiver);
     await receiver.reload();
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(2);
   });
@@ -176,6 +184,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
   test('참가자별 승인 결과는 목록에 누적되고 다시 숨긴 행만 제거된다', async ({ page }) => {
     await assignGeneralRoles(page);
     await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
+    await expectResultOnlyCopy(page);
 
     const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
     const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });
@@ -243,6 +252,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     const receiver = await context.newPage();
     await receiver.goto(url);
     await expect(receiver.getByRole('heading', { name: 'Alice님께 전달된 결과' })).toBeVisible();
+    await expectResultOnlyCopy(receiver);
     await expect(receiver.getByText('철수', { exact: true })).toHaveCount(0);
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
     await receiver.reload();
@@ -259,6 +269,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
 
     const receiver = await context.newPage();
     await receiver.goto(url);
+    await expectResultOnlyCopy(receiver);
     await expect(receiver.getByText('철수', { exact: true })).toHaveCount(0);
     await receiver.getByLabel('참가자 이름').fill('없는 이름');
     await receiver.getByRole('button', { name: '내 결과 찾기' }).click();
