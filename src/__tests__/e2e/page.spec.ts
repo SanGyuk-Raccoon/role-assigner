@@ -27,8 +27,7 @@ async function assignGeneralRoles(
 }
 
 async function copyShareLink(page: Page, scope: ReturnType<Page['locator']>): Promise<string> {
-  await scope.getByRole('button', { name: /링크 공유/u }).click();
-  await scope.getByRole('button', { name: '링크 복사' }).click();
+  await scope.getByRole('button', { name: /링크 복사/u }).click();
   await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
   return page.evaluate(() => navigator.clipboard.readText());
 }
@@ -148,6 +147,7 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.locator('.ra-public-results-grid')).toBeVisible();
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '결과 링크 복사' })).toBeVisible();
   });
 
   test('정규화 중복 오류를 입력에 연결하고 첫 오류로 초점을 이동한다', async ({ page }) => {
@@ -283,44 +283,32 @@ test.describe('브라우저 전용 배정 흐름', () => {
     expect(roleDataRequests).toEqual([]);
   });
 
-  test('공유 취소는 오류나 자동 복사로 바꾸지 않는다', async ({ page }) => {
+  test('링크 복사는 시스템 공유를 호출하지 않고 한 번에 클립보드에 쓴다', async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
       Object.defineProperty(navigator, 'share', {
         configurable: true,
-        value: () => Promise.reject(new DOMException('cancelled', 'AbortError')),
+        value: () => Promise.reject(new Error('시스템 공유를 호출하면 안 됩니다.')),
       });
     });
     await assignGeneralRoles(page);
     const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '공용 링크 공유' }).click();
-    await expect(scope.getByRole('button', { name: '링크 복사' })).toHaveCount(0);
-    await expect(scope.getByText(/실패|오류|권한/u)).toHaveCount(0);
+    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await expect(scope.getByText('링크를 복사했습니다.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/#result=/u);
   });
 
-  test('시스템 공유 성공을 참가자 행과 섞이지 않는 상태로 알린다', async ({ page }) => {
-    await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
-      Object.defineProperty(navigator, 'share', {
-        configurable: true,
-        value: () => Promise.resolve(),
-      });
-    });
+  test('링크 복사 성공을 참가자 행과 섞이지 않는 상태로 알린다', async ({ page }) => {
     await assignGeneralRoles(page);
     const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
     const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });
-    await aliceRow.getByRole('button', { name: '개인 링크 공유' }).click();
-    await expect(aliceRow.getByText('공유를 완료했습니다.')).toBeVisible();
-    await expect(otherRow.getByText('공유를 완료했습니다.')).toHaveCount(0);
+    await aliceRow.getByRole('button', { name: '개인 링크 복사' }).click();
+    await expect(aliceRow.getByText('링크를 복사했습니다.')).toBeVisible();
+    await expect(otherRow.getByText('링크를 복사했습니다.')).toHaveCount(0);
   });
 
-  test('공유·클립보드 실패 시 전체 링크를 선택해 수동 복사할 수 있다', async ({ page }) => {
+  test('클립보드 쓰기 실패 시 결과 링크를 선택해 수동 복사할 수 있다', async ({ page }) => {
     await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
-      Object.defineProperty(navigator, 'share', {
-        configurable: true,
-        value: () => Promise.reject(new DOMException('denied', 'NotAllowedError')),
-      });
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
         value: { writeText: () => Promise.reject(new DOMException('denied', 'NotAllowedError')) },
@@ -328,14 +316,24 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
     await assignGeneralRoles(page);
     const scope = page.locator('.ra-result-actions');
-    await scope.getByRole('button', { name: '공용 링크 공유' }).click();
-    await expect(scope.getByText(/공유 권한/u)).toBeVisible();
-    await scope.getByRole('button', { name: '링크 복사' }).click();
-    const manual = scope.getByLabel('직접 복사할 전체 링크');
+    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await expect(scope.getByText(/클립보드 권한/u)).toBeVisible();
+    const manual = scope.getByLabel('직접 복사할 결과 링크');
     await expect(manual).toBeVisible();
     await expect(manual).toHaveAttribute('readonly', '');
     await expect(manual).toBeFocused();
     await expect(manual).toHaveValue(/#result=/u);
+  });
+
+  test('클립보드 API 미지원 시 결과 링크를 선택해 수동 복사할 수 있다', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    });
+    await assignGeneralRoles(page);
+    const scope = page.locator('.ra-result-actions');
+    await scope.getByRole('button', { name: '공용 링크 복사' }).click();
+    await expect(scope.getByText(/지원하지 않는 브라우저/u)).toBeVisible();
+    await expect(scope.getByLabel('직접 복사할 결과 링크')).toBeFocused();
   });
 
   test('손상·버전·길이 오류를 구분하고 payload는 표시하지 않는다', async ({ page }) => {

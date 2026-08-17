@@ -738,8 +738,7 @@ export default function RoleAssigner() {
             <ShareControl
               url={shareLinks.shared.url}
               disabledReason={shareLinks.shared.error}
-              label="결과 공유하기"
-              shareTitle={`${label} 배정 공용 결과`}
+              label="결과 링크 복사"
             />
           </div>
 
@@ -820,8 +819,7 @@ export default function RoleAssigner() {
           <ShareControl
             url={shareLinks.shared.url}
             disabledReason={shareLinks.shared.error}
-            label="공용 링크 공유"
-            shareTitle={`${label} 배정 공용 결과`}
+            label="공용 링크 복사"
           />
         </div>
 
@@ -882,8 +880,7 @@ export default function RoleAssigner() {
                       compact
                       url={personalLink?.url ?? null}
                       disabledReason={personalLink?.error ?? '개인 링크를 준비하지 못했습니다.'}
-                      label="개인 링크 공유"
-                      shareTitle={`${assignment.name}님의 ${label} 결과`}
+                      label="개인 링크 복사"
                     />
                   </div>
                 </li>
