@@ -268,7 +268,7 @@
   }
 
   .ra-secret-seal {
-    @apply mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-pink-500 text-xs font-black text-white shadow-[0_12px_32px_rgba(236,72,153,0.28)];
+    @apply mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-pink-500 text-white shadow-[0_12px_32px_rgba(236,72,153,0.28)];
   }
 
   .ra-link-shell {

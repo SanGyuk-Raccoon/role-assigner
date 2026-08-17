@@ -103,12 +103,13 @@ function resultLabel(mode: AssignmentMode): string {
   return mode === 'manito' ? '마니또' : '역할';
 }
 
-function ParticipantAvatar({ size = 'default' }: { size?: 'compact' | 'default' | 'list' }) {
+function ParticipantAvatar({ size = 'default' }: { size?: 'compact' | 'default' | 'list' | 'seal' }) {
   const avatarSize = size === 'compact' ? 'h-8 w-8' : size === 'list' ? 'h-11 w-11' : 'h-10 w-10';
+  const avatarClassName = size === 'seal' ? 'ra-secret-seal' : `ra-avatar ${avatarSize}`;
   const iconSize = size === 'compact' ? 'h-4 w-4' : 'h-5 w-5';
 
   return (
-    <span className={`ra-avatar ${avatarSize}`} aria-hidden="true">
+    <span className={avatarClassName} aria-hidden="true">
       <svg
         className={`ra-avatar-icon ${iconSize}`}
         viewBox="0 0 24 24"
@@ -604,7 +605,7 @@ export default function RoleAssigner() {
           <div className="ra-secret-stage mt-8">
             {!personalLinkRevealed ? (
               <>
-                <span className="ra-secret-seal" aria-hidden="true">봉인</span>
+                <ParticipantAvatar size="seal" />
                 <p className="text-sm font-bold text-pink-200">주변에 화면을 볼 사람이 없는지 확인해주세요.</p>
                 <button
                   type="button"
@@ -676,7 +677,7 @@ export default function RoleAssigner() {
             <div className="ra-secret-stage mt-8">
               {!sharedRevealed ? (
                 <>
-                  <span className="ra-secret-seal" aria-hidden="true">봉인</span>
+                  <ParticipantAvatar size="seal" />
                   <p className="break-words text-xl font-black text-white">{sharedMatch.name}님</p>
                   <p className="mt-2 text-sm text-slate-300">본인이라면 아래 버튼을 눌러주세요.</p>
                   <button

@@ -305,6 +305,11 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await receiver.goto(url);
     await expect(receiver.getByRole('heading', { name: 'Alice님께 전달된 결과' })).toBeVisible();
     await expectResultOnlyCopy(receiver);
+    const sealedAvatar = receiver.locator('.ra-secret-seal');
+    await expect(sealedAvatar).toHaveCount(1);
+    await expect(sealedAvatar.locator('.ra-avatar-icon')).toHaveCount(1);
+    await expect(sealedAvatar).toHaveText('');
+    await expect(receiver.getByText('봉인', { exact: true })).toHaveCount(0);
     await expect(receiver.getByText('철수', { exact: true })).toHaveCount(0);
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
     await receiver.reload();
@@ -331,6 +336,11 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await receiver.getByLabel('참가자 이름').fill(' ＡＬＩＣＥ ');
     await receiver.getByRole('button', { name: '내 결과 찾기' }).click();
     await expect(receiver.getByText('Alice님', { exact: true })).toBeVisible();
+    const sealedAvatar = receiver.locator('.ra-secret-seal');
+    await expect(sealedAvatar).toHaveCount(1);
+    await expect(sealedAvatar.locator('.ra-avatar-icon')).toHaveCount(1);
+    await expect(sealedAvatar).toHaveText('');
+    await expect(receiver.getByText('봉인', { exact: true })).toHaveCount(0);
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(0);
     await receiver.getByRole('button', { name: '역할 확인하기' }).click();
     await expect(receiver.getByText('시민', { exact: true })).toBeVisible();
