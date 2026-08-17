@@ -994,11 +994,7 @@ export default function RoleAssigner() {
         </p>
       </header>
 
-      <div
-        className={`ra-reveal-switch ${revealMode === 'individual' ? 'ra-reveal-switch-with-description' : ''}`}
-        role="radiogroup"
-        aria-label="공개 방식"
-      >
+      <div className="ra-reveal-switch" role="radiogroup" aria-label="공개 방식">
         <button
           type="button"
           role="radio"
@@ -1023,24 +1019,6 @@ export default function RoleAssigner() {
           ? '배정이 끝나면 모든 결과를 한 화면에 바로 표시합니다.'
           : '모든 결과를 숨긴 상태에서 필요한 참가자만 확인합니다.'}
       </p>
-      {revealMode === 'individual' && (
-        <div className="ra-reveal-description">
-          <p>모든 결과를 숨긴 상태에서 필요한 참가자만 확인합니다.</p>
-          <dl className="ra-reveal-link-details">
-            <div>
-              <dt>전체 결과 링크</dt>
-              <dd>
-                모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
-                다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.
-              </dd>
-            </div>
-            <div>
-              <dt>개별 결과 링크</dt>
-              <dd>해당 참가자의 결과만 확인할 수 있습니다.</dd>
-            </div>
-          </dl>
-        </div>
-      )}
 
       <form onSubmit={handleAssign} noValidate>
         <section
@@ -1490,9 +1468,24 @@ export default function RoleAssigner() {
               <p className="mb-1 font-medium text-cyan-400">🌐 전체 공개</p>
               <p className="text-sm text-slate-400">배정 직후 한 화면에서 모든 결과를 확인합니다.</p>
             </div>
-            <div className="rounded-xl bg-slate-700/50 p-3">
+            <div className="ra-guide-individual rounded-xl bg-slate-700/50 p-3">
               <p className="mb-1 font-medium text-pink-400">🤫 개별 공개</p>
               <p className="text-sm text-slate-400">필요한 참가자만 공개하고 전체 결과 또는 개별 결과 링크를 복사합니다.</p>
+              <dl className="mt-3 space-y-3 border-t border-slate-600/60 pt-3 text-sm">
+                <div>
+                  <dt className="font-bold text-pink-200">전체 결과 링크</dt>
+                  <dd className="mt-1 leading-6 text-slate-300">
+                    모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
+                    다른 참가자의 이름을 입력하면 그 참가자의 결과도 볼 수 있습니다.
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-pink-200">개별 결과 링크</dt>
+                  <dd className="mt-1 leading-6 text-slate-300">
+                    해당 참가자의 결과만 볼 수 있습니다.
+                  </dd>
+                </div>
+              </dl>
             </div>
           </div>
         </div>

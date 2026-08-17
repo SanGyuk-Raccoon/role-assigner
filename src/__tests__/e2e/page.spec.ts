@@ -54,19 +54,30 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByRole('link', { name: 'DARAKBOX' })).toHaveCount(0);
   });
 
-  test('설정 화면은 20명 제한·마니또 전환을 제공하고 상시 글자 수를 숨긴다', async ({ page }) => {
+  test('설정 화면은 링크 안내를 하단에 유지하고 20명 제한·마니또 전환을 제공한다', async ({ page }) => {
     await openSetup(page);
     await expect(page.getByRole('radio', { name: '전체 공개' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('radio', { name: '개별 공개' })).toBeVisible();
     await expect(page.getByText('0명', { exact: true })).toBeVisible();
     await expect(page.getByText(/남은 \d+자|\d+\/80B/u)).toHaveCount(0);
 
+    const participantHeading = page.getByRole('heading', { name: /참가자/u });
+    const participantHeadingBefore = await participantHeading.boundingBox();
+    const individualGuide = page.locator('.ra-guide-individual');
+    await expect(page.locator('.ra-reveal-description')).toHaveCount(0);
+    await expect(individualGuide).toBeVisible();
+    await expect(individualGuide).toContainText('전체 결과 링크');
+    await expect(individualGuide).toContainText('다른 참가자의 이름을 입력하면 그 참가자의 결과도 볼 수 있습니다.');
+    await expect(individualGuide).toContainText('개별 결과 링크');
+    await expect(individualGuide).toContainText('해당 참가자의 결과만 볼 수 있습니다.');
+
     await page.getByRole('radio', { name: '개별 공개' }).click();
-    const revealDescription = page.locator('.ra-reveal-description');
-    await expect(revealDescription).toContainText('전체 결과 링크');
-    await expect(revealDescription).toContainText('다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.');
-    await expect(revealDescription).toContainText('개별 결과 링크');
-    await expect(revealDescription).toContainText('해당 참가자의 결과만 확인할 수 있습니다.');
+    const participantHeadingAfter = await participantHeading.boundingBox();
+    expect(participantHeadingBefore).not.toBeNull();
+    expect(participantHeadingAfter).not.toBeNull();
+    expect(participantHeadingAfter!.y).toBe(participantHeadingBefore!.y);
+    await expect(page.locator('.ra-reveal-description')).toHaveCount(0);
+    await expect(individualGuide).toBeVisible();
 
     const manitoToggle = page.getByRole('switch', { name: '마니또 모드' });
     const manitoTrack = manitoToggle.locator('span[aria-hidden="true"]').last();
