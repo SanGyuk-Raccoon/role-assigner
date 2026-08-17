@@ -1,329 +1,752 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import dynamic from 'next/dynamic';
-import { isMultiplayerConfigured, checkServerHealth, RoomError, RoomErrorType } from '@/room-manager';
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { AccessibleDialog } from '@/components/accessible-dialog';
+import { ShareControl } from '@/components/share-control';
+import {
+  PayloadError,
+  ResultPayload,
+  buildResultUrl,
+  createAllResultsPayload,
+  createPersonalPayload,
+  createSharedPayload,
+  readResultHash,
+} from '@/result-link';
+import {
+  Assignment,
+  AssignmentMode,
+  LIMITS,
+  ParticipantInput,
+  RoleInput,
+  ValidationField,
+  ValidationIssue,
+  assign,
+  createCryptoRandomIndex,
+  createLookupKey,
+  limitDisplayInput,
+  normalizeDisplayValue,
+  validateSetup,
+} from '@/utils';
 
-const RoleAssignerRoom = dynamic(() => import('@/components/room-view'), {
-  ssr: false,
-  loading: () => (
-    <div className="flex items-center justify-center py-16">
-      <div className="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  ),
-});
+type ViewState =
+  | 'setup'
+  | 'shuffling'
+  | 'results'
+  | 'personal-link'
+  | 'all-link'
+  | 'shared-link'
+  | 'invalid-link';
 
-type RevealMode = 'public' | 'private';
-type ViewState = 'setup' | 'shuffling' | 'result';
+type RevealMode = 'public' | 'individual';
 
-interface RoleConfig {
+type Confirmation = 'reassign' | 'new-game' | null;
+
+interface ParticipantDraft extends ParticipantInput {}
+
+interface RoleDraft {
   id: string;
   name: string;
-  count: number;
+  count: string;
 }
 
-interface Participant {
-  id: string;
-  name: string;
+interface InvalidLinkState {
+  title: string;
+  message: string;
 }
 
-interface AssignedRole {
-  participantName: string;
-  role: string;
-  revealed: boolean;
+interface LinkBuildResult {
+  url: string | null;
+  error?: string;
 }
 
-// Confetti particle component
-function Confetti({ active }: { active: boolean }) {
-  const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#95E1D3', '#F38181', '#AA96DA'];
+interface InputLimitWarning {
+  message: string;
+  sequence: number;
+}
 
-  if (!active) return null;
+const initialParticipants = (): ParticipantDraft[] => [
+  { id: 'participant-1', name: '' },
+  { id: 'participant-2', name: '' },
+];
+
+const initialRoles = (): RoleDraft[] => [
+  { id: 'role-1', name: '', count: '1' },
+];
+
+function linkErrorState(error: unknown): InvalidLinkState {
+  if (error instanceof PayloadError && error.code === 'too-long') {
+    return {
+      title: '너무 긴 링크입니다',
+      message: '결과 데이터가 허용된 8,192자를 넘었습니다. 링크를 만든 사람에게 새 링크를 요청해주세요.',
+    };
+  }
+  if (error instanceof PayloadError && error.code === 'unsupported-version') {
+    return {
+      title: '지원하지 않는 링크입니다',
+      message: '현재 버전에서 열 수 없는 결과 링크입니다. 최신 화면에서 링크를 다시 만들어주세요.',
+    };
+  }
+  return {
+    title: '손상된 링크입니다',
+    message: '결과 링크가 완전하지 않거나 올바른 형식이 아닙니다. 주소 전체를 다시 받아주세요.',
+  };
+}
+
+function resultLabel(mode: AssignmentMode): string {
+  return mode === 'manito' ? '마니또' : '역할';
+}
+
+function ParticipantAvatar({ size = 'default' }: { size?: 'compact' | 'default' | 'list' | 'seal' }) {
+  const avatarSize = size === 'compact' ? 'h-8 w-8' : size === 'list' ? 'h-11 w-11' : 'h-10 w-10';
+  const avatarClassName = size === 'seal' ? 'ra-secret-seal' : `ra-avatar ${avatarSize}`;
+  const iconSize = size === 'compact' ? 'h-4 w-4' : 'h-5 w-5';
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-      {[...Array(50)].map((_, i) => (
-        <div
-          key={i}
-          className="absolute w-3 h-3 rounded-full"
-          style={{
-            backgroundColor: colors[i % colors.length],
-            left: `${Math.random() * 100}%`,
-            top: '-20px',
-            animation: `fall ${1.5 + Math.random()}s linear forwards`,
-            animationDelay: `${Math.random() * 0.5}s`,
-          }}
-        />
+    <span className={avatarClassName} aria-hidden="true">
+      <svg
+        className={`ra-avatar-icon ${iconSize}`}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        focusable="false"
+      >
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5.5 20c.6-3.4 3.1-5.5 6.5-5.5s5.9 2.1 6.5 5.5" />
+      </svg>
+    </span>
+  );
+}
+
+function PublicResultsGrid({ assignments, label }: { assignments: Assignment[]; label: string }) {
+  const compact = assignments.length > 4;
+
+  return (
+    <section className={`ra-public-results-grid mb-8 grid gap-3 ${
+      assignments.length <= 4
+        ? 'grid-cols-1'
+        : assignments.length <= 8
+          ? 'grid-cols-1 sm:grid-cols-2'
+          : 'grid-cols-2 sm:grid-cols-3'
+    }`} aria-label="전체 결과">
+      {assignments.map((assignment, index) => (
+        <article
+          key={createLookupKey(assignment.name)}
+          className="relative overflow-hidden rounded-2xl animate-reveal"
+          style={{ animationDelay: `${index * 0.08}s` }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
+          <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${compact ? 'p-3' : 'p-4'}`}>
+            <div className="mb-2 flex min-w-0 items-center gap-3">
+              <ParticipantAvatar size={compact ? 'compact' : 'default'} />
+              <h2 className={`min-w-0 break-words font-bold text-white ${compact ? 'text-sm' : 'text-base'}`}>
+                {assignment.name}
+              </h2>
+            </div>
+            <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${compact ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
+              <span className="sr-only">{label}: </span>
+              <span>{assignment.role}</span>
+            </p>
+          </div>
+        </article>
       ))}
-      <style jsx>{`
-        @keyframes fall {
-          0% { transform: translateY(0) rotate(0deg); opacity: 1; }
-          100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
-        }
-      `}</style>
+    </section>
+  );
+}
+
+function LinkPageFrame({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div className={`ra-page-shell ${wide ? '' : 'ra-link-shell'}`}>
+      <div className="ra-brand-lockup" aria-hidden="true">
+        <span className="ra-brand-mark">🎭</span>
+        <span>역할 뽑기</span>
+      </div>
+      {children}
     </div>
   );
 }
 
 export default function RoleAssigner() {
-  const [revealMode, setRevealMode] = useState<RevealMode>('public');
-  const [isMultiplayerReady, setIsMultiplayerReady] = useState(false);
   const [viewState, setViewState] = useState<ViewState>('setup');
+  const [hashChecked, setHashChecked] = useState(false);
+  const [revealMode, setRevealMode] = useState<RevealMode>('public');
+  const [mode, setMode] = useState<AssignmentMode>('role');
+  const [participants, setParticipants] = useState<ParticipantDraft[]>(initialParticipants);
+  const [roles, setRoles] = useState<RoleDraft[]>(initialRoles);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [issues, setIssues] = useState<ValidationIssue[]>([]);
+  const [runtimeError, setRuntimeError] = useState('');
+  const [showAllConfirm, setShowAllConfirm] = useState(false);
+  const [pendingParticipantReveal, setPendingParticipantReveal] = useState<Assignment | null>(null);
+  const [revealedParticipantKeys, setRevealedParticipantKeys] = useState<Set<string>>(() => new Set());
+  const [confirmation, setConfirmation] = useState<Confirmation>(null);
+  const [linkPayload, setLinkPayload] = useState<ResultPayload | null>(null);
+  const [invalidLink, setInvalidLink] = useState<InvalidLinkState | null>(null);
+  const [personalLinkRevealed, setPersonalLinkRevealed] = useState(false);
+  const [sharedName, setSharedName] = useState('');
+  const [sharedError, setSharedError] = useState('');
+  const [sharedMatch, setSharedMatch] = useState<Assignment | null>(null);
+  const [sharedRevealed, setSharedRevealed] = useState(false);
+  const [inputLimitWarnings, setInputLimitWarnings] = useState<Record<string, InputLimitWarning>>({});
 
-  // Server check state
-  const [isCheckingServer, setIsCheckingServer] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-  const [serverErrorType, setServerErrorType] = useState<RoomErrorType | null>(null);
-  const [showServerError, setShowServerError] = useState(false);
-  const [roles, setRoles] = useState<RoleConfig[]>([
-    { id: '1', name: '', count: 1 },
-  ]);
-  const [participants, setParticipants] = useState<Participant[]>([
-    { id: '1', name: '' },
-    { id: '2', name: '' },
-  ]);
-  const [assignedRoles, setAssignedRoles] = useState<AssignedRole[]>([]);
-  const [showConfetti, setShowConfetti] = useState(false);
-  const [showValidationError, setShowValidationError] = useState(false);
-  const [validationErrorMessage, setValidationErrorMessage] = useState('');
-  const [showCopied, setShowCopied] = useState(false);
+  const participantIdRef = useRef(3);
+  const roleIdRef = useRef(2);
+  const shuffleTimerRef = useRef<number | null>(null);
+  const inputLimitSequencesRef = useRef(new Map<ValidationField, number>());
+  const inputLimitTimersRef = useRef(new Map<ValidationField, number>());
+  const composingFieldsRef = useRef(new Set<ValidationField>());
+  const fieldRefs = useRef(new Map<ValidationField, HTMLElement>());
+  const sharedNameRef = useRef<HTMLInputElement>(null);
 
-  // Track initial IDs for staggered animation (only on first render)
-  const initialParticipantIds = useRef<Set<string>>(new Set(['1', '2']));
-  const initialRoleIds = useRef<Set<string>>(new Set(['1']));
-
-  useEffect(() => {
-    setIsMultiplayerReady(isMultiplayerConfigured());
+  const clearInputLimitWarning = useCallback((field: ValidationField) => {
+    const timer = inputLimitTimersRef.current.get(field);
+    if (timer !== undefined) window.clearTimeout(timer);
+    inputLimitTimersRef.current.delete(field);
+    inputLimitSequencesRef.current.delete(field);
+    setInputLimitWarnings((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }, []);
 
-  // Handle entering private mode with server health check
-  const handleEnterPrivateMode = async () => {
-    setIsCheckingServer(true);
-    setServerError(null);
-    setServerErrorType(null);
+  const clearAllInputLimitWarnings = useCallback(() => {
+    inputLimitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    inputLimitTimersRef.current.clear();
+    inputLimitSequencesRef.current.clear();
+    composingFieldsRef.current.clear();
+    setInputLimitWarnings({});
+  }, []);
 
+  const triggerInputLimitWarning = useCallback((field: ValidationField, maxCodePoints: number) => {
+    const existingTimer = inputLimitTimersRef.current.get(field);
+    if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+
+    const sequence = (inputLimitSequencesRef.current.get(field) ?? 0) + 1;
+    inputLimitSequencesRef.current.set(field, sequence);
+    setInputLimitWarnings((current) => ({
+      ...current,
+      [field]: {
+        message: `최대 ${maxCodePoints}자까지 입력할 수 있어요.`,
+        sequence,
+      },
+    }));
+
+    const timer = window.setTimeout(() => {
+      inputLimitTimersRef.current.delete(field);
+      inputLimitSequencesRef.current.delete(field);
+      setInputLimitWarnings((current) => {
+        if (current[field]?.sequence !== sequence) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
+    }, 1_800);
+    inputLimitTimersRef.current.set(field, timer);
+  }, []);
+
+  const clearHostRevealState = useCallback(() => {
+    setShowAllConfirm(false);
+    setPendingParticipantReveal(null);
+    setRevealedParticipantKeys(new Set());
+  }, []);
+
+  const loadHash = useCallback(() => {
     try {
-      const isHealthy = await checkServerHealth();
-      if (!isHealthy) {
-        throw new RoomError('CONNECTION_FAILED', 'Failed to connect to multiplayer server');
-      }
-      setRevealMode('private');
-    } catch (err) {
-      if (err instanceof RoomError) {
-        setServerErrorType(err.type);
-        // Translate error message
-        const errorTypeMap: Record<RoomErrorType, string> = {
-          'CONNECTION_FAILED': '서버 연결에 실패했습니다',
-          'CONNECTION_TIMEOUT': '연결 시간이 초과되었습니다',
-          'JOIN_TIMEOUT': '참여 시간이 초과되었습니다',
-          'ROOM_NOT_FOUND': '방을 찾을 수 없습니다',
-          'ROOM_FULL': '방이 가득 찼습니다 (최대 20명)',
-          'ROOM_EXPIRED': '방이 만료되었습니다',
-          'NAME_TAKEN': '이미 사용 중인 이름입니다',
-          'NOT_ACCEPTING': '방이 더 이상 참가자를 받지 않습니다',
-          'SERVER_ERROR': '서버 오류가 발생했습니다',
-          'RATE_LIMITED': '서버가 일시적으로 혼잡합니다',
-          'UNKNOWN': '알 수 없는 오류가 발생했습니다',
-        };
-        setServerError(errorTypeMap[err.type] || '알 수 없는 오류가 발생했습니다');
+      const payload = readResultHash(window.location.hash);
+      if (!payload) {
+        setLinkPayload(null);
+        setInvalidLink(null);
+        setViewState((current) => (
+          current === 'personal-link'
+            || current === 'all-link'
+            || current === 'shared-link'
+            || current === 'invalid-link'
+            ? 'setup'
+            : current
+        ));
       } else {
-        setServerError('알 수 없는 오류가 발생했습니다');
+        clearHostRevealState();
+        setAssignments([]);
+        setLinkPayload(payload);
+        setInvalidLink(null);
+        setPersonalLinkRevealed(false);
+        setSharedName('');
+        setSharedError('');
+        setSharedMatch(null);
+        setSharedRevealed(false);
+        setViewState(
+          payload.kind === 'personal'
+            ? 'personal-link'
+            : payload.kind === 'all'
+              ? 'all-link'
+              : 'shared-link',
+        );
       }
-      setShowServerError(true);
+    } catch (error) {
+      clearHostRevealState();
+      setAssignments([]);
+      setLinkPayload(null);
+      setInvalidLink(linkErrorState(error));
+      setViewState('invalid-link');
     } finally {
-      setIsCheckingServer(false);
+      setHashChecked(true);
     }
+  }, [clearHostRevealState]);
+
+  useEffect(() => {
+    loadHash();
+    window.addEventListener('hashchange', loadHash);
+    window.addEventListener('popstate', loadHash);
+    return () => {
+      window.removeEventListener('hashchange', loadHash);
+      window.removeEventListener('popstate', loadHash);
+    };
+  }, [loadHash]);
+
+  useEffect(() => () => {
+    if (shuffleTimerRef.current !== null) window.clearTimeout(shuffleTimerRef.current);
+    inputLimitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+
+  useEffect(() => {
+    if (assignments.length === 0 || viewState !== 'results') return undefined;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [assignments.length, viewState]);
+
+  const setFieldRef = (field: ValidationField) => (element: HTMLElement | null) => {
+    if (element) fieldRefs.current.set(field, element);
+    else fieldRefs.current.delete(field);
+  };
+
+  const issueFor = (field: ValidationField): string | undefined =>
+    issues.find((issue) => issue.field === field)?.message;
+
+  const clearIssuesFor = (...fields: ValidationField[]) => {
+    setIssues((current) => current.filter((issue) => !fields.includes(issue.field)));
+    setRuntimeError('');
+  };
+
+  const applyBoundedNameInput = (
+    field: ValidationField,
+    value: string,
+    maxCodePoints: number,
+    maxBytes: number,
+    commit: (nextValue: string) => void,
+    composing = false,
+    clearValidation = true,
+  ) => {
+    if (clearValidation) clearIssuesFor(field, 'participants', 'roles');
+    if (composing) {
+      clearInputLimitWarning(field);
+      commit(value);
+      return;
+    }
+
+    const limited = limitDisplayInput(value, maxCodePoints, maxBytes);
+    commit(limited.value);
+    if (limited.exceeded) triggerInputLimitWarning(field, maxCodePoints);
+    else clearInputLimitWarning(field);
+  };
+
+  const focusFirstIssue = (nextIssues: ValidationIssue[]) => {
+    const first = nextIssues[0];
+    if (!first) return;
+    window.requestAnimationFrame(() => fieldRefs.current.get(first.field)?.focus());
+  };
+
+  const toRoleInputs = useCallback((): RoleInput[] => roles.map((role) => ({
+    id: role.id,
+    name: role.name,
+    count: role.count.trim() === '' ? Number.NaN : Number(role.count),
+  })), [roles]);
+
+  const startAssignment = useCallback((
+    nextMode: AssignmentMode,
+    normalizedParticipants: string[],
+    normalizedRoles: { name: string; count: number }[],
+  ) => {
+    try {
+      const randomIndex = createCryptoRandomIndex();
+      const nextAssignments = assign(nextMode, normalizedParticipants, normalizedRoles, randomIndex);
+      clearHostRevealState();
+      setRuntimeError('');
+      setViewState('shuffling');
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (shuffleTimerRef.current !== null) window.clearTimeout(shuffleTimerRef.current);
+      shuffleTimerRef.current = window.setTimeout(() => {
+        setAssignments(nextAssignments);
+        setViewState('results');
+        shuffleTimerRef.current = null;
+      }, reduceMotion ? 0 : 650);
+      return true;
+    } catch (error) {
+      setRuntimeError(error instanceof Error
+        ? error.message
+        : '역할을 섞지 못했습니다. 최신 브라우저에서 다시 시도해주세요.');
+      return false;
+    }
+  }, [clearHostRevealState]);
+
+  const handleAssign = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const validation = validateSetup(mode, participants, toRoleInputs());
+    setIssues(validation.issues);
+    if (!validation.valid) {
+      focusFirstIssue(validation.issues);
+      return;
+    }
+
+    setParticipants((current) => current.map((participant, index) => ({
+      ...participant,
+      name: validation.participants[index],
+    })));
+    if (mode === 'role') {
+      setRoles((current) => current.map((role, index) => ({
+        ...role,
+        name: validation.roles[index].name,
+        count: String(validation.roles[index].count),
+      })));
+    }
+    startAssignment(mode, validation.participants, validation.roles);
   };
 
   const addParticipant = () => {
-    setParticipants([...participants, { id: Date.now().toString(), name: '' }]);
+    if (participants.length >= LIMITS.maxParticipants) return;
+    const id = `participant-${participantIdRef.current}`;
+    participantIdRef.current += 1;
+    setParticipants((current) => [...current, { id, name: '' }]);
+    clearIssuesFor('participants');
   };
 
   const removeParticipant = (id: string) => {
-    if (participants.length > 2) {
-      setParticipants(participants.filter(p => p.id !== id));
-    }
-  };
-
-  const updateParticipant = (id: string, value: string) => {
-    setParticipants(participants.map(p => p.id === id ? { ...p, name: value } : p));
+    if (participants.length <= LIMITS.minParticipants) return;
+    const field: ValidationField = `participant:${id}`;
+    clearInputLimitWarning(field);
+    composingFieldsRef.current.delete(field);
+    setParticipants((current) => current.filter((participant) => participant.id !== id));
+    clearIssuesFor(field, 'participants', 'roles');
   };
 
   const addRole = () => {
-    setRoles([...roles, { id: Date.now().toString(), name: '', count: 1 }]);
-  };
-
-  const resetParticipants = () => {
-    setParticipants([
-      { id: Date.now().toString(), name: '' },
-      { id: (Date.now() + 1).toString(), name: '' },
-    ]);
-  };
-
-  const resetRoles = () => {
-    setRoles([{ id: Date.now().toString(), name: '', count: 1 }]);
+    if (roles.length >= LIMITS.maxRoles) return;
+    const id = `role-${roleIdRef.current}`;
+    roleIdRef.current += 1;
+    setRoles((current) => [...current, { id, name: '', count: '0' }]);
+    clearIssuesFor('roles');
   };
 
   const removeRole = (id: string) => {
-    if (roles.length > 1) {
-      setRoles(roles.filter(r => r.id !== id));
-    }
+    if (roles.length <= 1) return;
+    const nameField: ValidationField = `role-name:${id}`;
+    clearInputLimitWarning(nameField);
+    composingFieldsRef.current.delete(nameField);
+    setRoles((current) => current.filter((role) => role.id !== id));
+    clearIssuesFor(nameField, `role-count:${id}`, 'roles');
   };
 
-  const updateRole = (id: string, field: keyof RoleConfig, value: string | number) => {
-    setRoles(roles.map(r => r.id === id ? { ...r, [field]: value } : r));
-  };
-
-  const shuffleArray = <T,>(array: T[]): T[] => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  };
-
-  const assignRoles = useCallback(() => {
-    const validParticipants = participants.filter(p => p.name.trim());
-
-    if (validParticipants.length < 2) {
-      setValidationErrorMessage('최소 2명 이상의 참가자가 필요합니다');
-      setShowValidationError(true);
-      return;
-    }
-
-    const rolePool: string[] = [];
-
-    roles.forEach(role => {
-      if (role.count > 0 && role.name.trim()) {
-        for (let i = 0; i < role.count; i++) {
-          rolePool.push(role.name);
-        }
-      }
-    });
-
-    const remainingRole = roles.find(r => r.count === 0);
-    const remainingCount = validParticipants.length - rolePool.length;
-
-    if (remainingCount > 0 && remainingRole && remainingRole.name.trim()) {
-      for (let i = 0; i < remainingCount; i++) {
-        rolePool.push(remainingRole.name);
-      }
-    } else if (remainingCount > 0) {
-      setValidationErrorMessage('역할 수와 참가자 수가 맞지 않습니다');
-      setShowValidationError(true);
-      return;
-    }
-
-    if (rolePool.length !== validParticipants.length) {
-      setValidationErrorMessage('역할 수와 참가자 수가 맞지 않습니다');
-      setShowValidationError(true);
-      return;
-    }
-
-    // Start shuffling animation
-    setViewState('shuffling');
-
-    // Simulate shuffling for dramatic effect
-    setTimeout(() => {
-      const shuffledRoles = shuffleArray(rolePool);
-      const assigned = validParticipants.map((p, i) => ({
-        participantName: p.name,
-        role: shuffledRoles[i],
-        revealed: false,
-      }));
-
-      setAssignedRoles(assigned);
-      setViewState('result');
-      setShowConfetti(true);
-
-      // Auto-reveal with staggered animation
-      assigned.forEach((_, idx) => {
-        setTimeout(() => {
-          setAssignedRoles(prev =>
-            prev.map((r, i) => i === idx ? { ...r, revealed: true } : r)
-          );
-        }, 300 + idx * 200);
-      });
-
-      setTimeout(() => setShowConfetti(false), 3000);
-    }, 1500);
-  }, [participants, roles]);
-
-  const resetGame = () => {
+  const resetSetup = useCallback(() => {
+    if (shuffleTimerRef.current !== null) window.clearTimeout(shuffleTimerRef.current);
+    shuffleTimerRef.current = null;
+    setRevealMode('public');
+    setMode('role');
+    setParticipants(initialParticipants());
+    setRoles(initialRoles());
+    participantIdRef.current = 3;
+    roleIdRef.current = 2;
+    setAssignments([]);
+    setIssues([]);
+    setRuntimeError('');
+    setConfirmation(null);
+    setLinkPayload(null);
+    setInvalidLink(null);
+    setPersonalLinkRevealed(false);
+    setSharedName('');
+    setSharedError('');
+    setSharedMatch(null);
+    setSharedRevealed(false);
+    clearAllInputLimitWarnings();
+    clearHostRevealState();
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     setViewState('setup');
-    setAssignedRoles([]);
-  };
+    setHashChecked(true);
+  }, [clearAllInputLimitWarnings, clearHostRevealState]);
 
-  const reassign = () => {
-    setAssignedRoles([]);
-    assignRoles();
-  };
-
-  const shareResult = async () => {
-    const resultText = assignedRoles
-      .map((r) => `👤 ${r.participantName} → 🎭 ${r.role}`)
-      .join('\n');
-
-    const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
-    const shareText = `🎭 역할 배정 완료!\n\n${resultText}\n\n무료 역할 배정기로 마피아, 마니또 게임을 더 재밌게!\n🔗 ${siteUrl}/role-assigner`;
-
-    try {
-      await navigator.clipboard.writeText(shareText);
-      setShowCopied(true);
-      setTimeout(() => setShowCopied(false), 2000);
-    } catch {
-      // Fallback for older browsers
-      const textarea = document.createElement('textarea');
-      textarea.value = shareText;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setShowCopied(true);
-      setTimeout(() => setShowCopied(false), 2000);
+  const confirmReassign = () => {
+    setConfirmation(null);
+    const validation = validateSetup(mode, participants, toRoleInputs());
+    if (!validation.valid) {
+      setIssues(validation.issues);
+      setViewState('setup');
+      focusFirstIssue(validation.issues);
+      return;
     }
+    startAssignment(mode, validation.participants, validation.roles);
   };
 
-  // Private mode (multiplayer)
-  if (revealMode === 'private') {
+  const shareLinks = useMemo(() => {
+    const unavailable: LinkBuildResult = { url: null, error: '링크를 준비하는 중입니다.' };
+    const personal = new Map<string, LinkBuildResult>();
+    if (!hashChecked || assignments.length === 0 || typeof window === 'undefined') {
+      return { all: unavailable, shared: unavailable, personal };
+    }
+
+    const build = (payload: ResultPayload): LinkBuildResult => {
+      try {
+        return { url: buildResultUrl(window.location, payload) };
+      } catch (error) {
+        return {
+          url: null,
+          error: error instanceof PayloadError && error.code === 'too-long'
+            ? '공유 링크가 8,192자를 넘었습니다. 이름이나 역할 길이를 줄여주세요.'
+            : '공유 링크를 만들 수 없습니다. 입력 내용을 확인해주세요.',
+        };
+      }
+    };
+
+    assignments.forEach((assignment) => {
+      personal.set(createLookupKey(assignment.name), build(createPersonalPayload(mode, assignment)));
+    });
+    return {
+      all: build(createAllResultsPayload(mode, assignments)),
+      shared: build(createSharedPayload(mode, assignments)),
+      personal,
+    };
+  }, [assignments, hashChecked, mode]);
+
+  const handleSharedLookup = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!linkPayload || linkPayload.kind !== 'shared') return;
+    const key = createLookupKey(sharedName);
+    const match = linkPayload.assignments.find((assignment) => createLookupKey(assignment.name) === key);
+    if (!key || !match) {
+      setSharedError('이름을 다시 확인해주세요');
+      setSharedMatch(null);
+      setSharedRevealed(false);
+      sharedNameRef.current?.focus();
+      return;
+    }
+    setSharedError('');
+    setSharedName(normalizeDisplayValue(sharedName));
+    setSharedMatch(match);
+    setSharedRevealed(false);
+  };
+
+  if (!hashChecked) {
     return (
-      <div className="ra-container">
-        <RoleAssignerRoom onBack={() => setRevealMode('public')} />
+      <div className="ra-page-shell flex min-h-[420px] items-center justify-center" role="status">
+        <div className="ra-loading-seal" aria-hidden="true">🎴</div>
+        <span className="sr-only">결과 링크를 확인하는 중입니다.</span>
       </div>
     );
   }
 
-  // Shuffling animation screen
+  if (viewState === 'invalid-link' && invalidLink) {
+    return (
+      <LinkPageFrame>
+        <section className="ra-link-panel text-center" aria-labelledby="invalid-link-title">
+          <div className="ra-status-symbol ra-status-symbol-error" aria-hidden="true">!</div>
+          <h1 id="invalid-link-title" className="mt-5 text-3xl font-black text-white">{invalidLink.title}</h1>
+          <p className="mx-auto mt-3 max-w-lg leading-7 text-slate-300">{invalidLink.message}</p>
+          <button type="button" onClick={resetSetup} className="ra-btn-primary mt-8 w-full">
+            새 역할 뽑기
+          </button>
+        </section>
+      </LinkPageFrame>
+    );
+  }
+
+  if (viewState === 'all-link' && linkPayload?.kind === 'all') {
+    const label = resultLabel(linkPayload.mode);
+    return (
+      <LinkPageFrame wide>
+        <section aria-labelledby="all-link-title">
+          <header className="mb-8 text-center">
+            <p className="ra-section-kicker">결과 링크</p>
+            <h1 id="all-link-title" className="mt-2 text-3xl font-black text-white">
+              {label} 전체 결과
+            </h1>
+          </header>
+
+          <PublicResultsGrid assignments={linkPayload.assignments} label={label} />
+          <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
+            새 역할 뽑기
+          </button>
+        </section>
+      </LinkPageFrame>
+    );
+  }
+
+  if (viewState === 'personal-link' && linkPayload?.kind === 'personal') {
+    const label = resultLabel(linkPayload.mode);
+    return (
+      <LinkPageFrame>
+        <section className="ra-link-panel" aria-labelledby="personal-link-title">
+          <p className="ra-section-kicker">개별 결과 링크</p>
+          <h1 id="personal-link-title" className="mt-2 break-words text-3xl font-black text-white">
+            {linkPayload.assignment.name}님께 전달된 결과
+          </h1>
+
+          <div className="ra-secret-stage mt-8">
+            {!personalLinkRevealed ? (
+              <>
+                <ParticipantAvatar size="seal" />
+                <p className="text-sm font-bold text-pink-200">주변에 화면을 볼 사람이 없는지 확인해주세요.</p>
+                <button
+                  type="button"
+                  onClick={() => setPersonalLinkRevealed(true)}
+                  className="ra-btn-primary mt-5 w-full"
+                >
+                  {label} 확인하기
+                </button>
+              </>
+            ) : (
+              <div aria-live="polite">
+                <p className="text-sm font-bold text-cyan-200">나의 {label}</p>
+                <p className="mt-3 break-words text-3xl font-black leading-tight text-white">
+                  {linkPayload.assignment.role}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPersonalLinkRevealed(false)}
+                  className="ra-btn-secondary mt-6 w-full"
+                >
+                  결과 숨기기
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
+            새 역할 뽑기
+          </button>
+        </section>
+      </LinkPageFrame>
+    );
+  }
+
+  if (viewState === 'shared-link' && linkPayload?.kind === 'shared') {
+    const label = resultLabel(linkPayload.mode);
+    return (
+      <LinkPageFrame>
+        <section className="ra-link-panel" aria-labelledby="shared-link-title">
+          <p className="ra-section-kicker">전체 결과 링크</p>
+          <h1 id="shared-link-title" className="mt-2 text-3xl font-black text-white">내 결과 찾기</h1>
+          <p className="mt-3 leading-7 text-slate-300">
+            배정할 때 사용한 이름을 정확히 입력하세요.
+          </p>
+
+          {!sharedMatch ? (
+            <form onSubmit={handleSharedLookup} className="mt-7" noValidate>
+              <label htmlFor="shared-name" className="ra-label">참가자 이름</label>
+              <input
+                ref={sharedNameRef}
+                id="shared-name"
+                type="text"
+                value={sharedName}
+                onChange={(event) => {
+                  setSharedName(event.target.value);
+                  setSharedError('');
+                }}
+                aria-invalid={Boolean(sharedError)}
+                aria-describedby={sharedError ? 'shared-name-error' : undefined}
+                autoComplete="off"
+                className="ra-input mt-2"
+              />
+              {sharedError && (
+                <p id="shared-name-error" className="ra-field-error" role="alert">{sharedError}</p>
+              )}
+              <button type="submit" className="ra-btn-primary mt-4 w-full">내 결과 찾기</button>
+            </form>
+          ) : (
+            <div className="ra-secret-stage mt-8">
+              {!sharedRevealed ? (
+                <>
+                  <ParticipantAvatar size="seal" />
+                  <p className="break-words text-xl font-black text-white">{sharedMatch.name}님</p>
+                  <p className="mt-2 text-sm text-slate-300">본인이라면 아래 버튼을 눌러주세요.</p>
+                  <button
+                    type="button"
+                    onClick={() => setSharedRevealed(true)}
+                    className="ra-btn-primary mt-5 w-full"
+                  >
+                    {label} 확인하기
+                  </button>
+                </>
+              ) : (
+                <div aria-live="polite">
+                  <p className="text-sm font-bold text-cyan-200">{sharedMatch.name}님의 {label}</p>
+                  <p className="mt-3 break-words text-3xl font-black leading-tight text-white">
+                    {sharedMatch.role}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSharedRevealed(false);
+                      setSharedMatch(null);
+                      setSharedName('');
+                      window.requestAnimationFrame(() => sharedNameRef.current?.focus());
+                    }}
+                    className="ra-btn-secondary mt-6 w-full"
+                  >
+                    확인 완료
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <button type="button" onClick={resetSetup} className="ra-btn-tertiary mt-6 w-full">
+            새 역할 뽑기
+          </button>
+        </section>
+      </LinkPageFrame>
+    );
+  }
+
   if (viewState === 'shuffling') {
     return (
-      <div className="ra-container flex flex-col items-center justify-center min-h-[400px]">
+      <div className="ra-page-shell flex min-h-[400px] flex-col items-center justify-center" role="status" aria-live="polite">
         <div className="relative">
-          {/* Spinning cards */}
-          <div className="flex gap-4 mb-8">
-            {[...Array(3)].map((_, i) => (
+          <div className="mb-8 flex gap-4" aria-hidden="true">
+            {[0, 1, 2].map((index) => (
               <div
-                key={i}
-                className="w-20 h-28 rounded-xl bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 shadow-2xl animate-float"
-                style={{ animationDelay: `${i * 0.1}s` }}
+                key={index}
+                className="h-28 w-20 animate-float rounded-xl bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 shadow-2xl"
+                style={{ animationDelay: `${index * 0.1}s` }}
               >
-                <div className="w-full h-full rounded-xl bg-slate-900/50 backdrop-blur flex items-center justify-center">
+                <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-900/50 backdrop-blur">
                   <span className="text-3xl">🎴</span>
                 </div>
               </div>
             ))}
           </div>
-
-          {/* Loading text */}
           <div className="text-center">
-            <p className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400 animate-pulse">
+            <p className="animate-pulse text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
               섞는 중...
             </p>
-            <div className="flex justify-center gap-1 mt-4">
-              {[...Array(3)].map((_, i) => (
-                <div
-                  key={i}
-                  className="w-3 h-3 rounded-full bg-pink-500 animate-bounce"
-                  style={{ animationDelay: `${i * 0.1}s` }}
+            <p className="sr-only">결과는 이 브라우저 안에서만 만들어집니다.</p>
+            <div className="mt-4 flex justify-center gap-1" aria-hidden="true">
+              {[0, 1, 2].map((index) => (
+                <span
+                  key={index}
+                  className="h-3 w-3 animate-bounce rounded-full bg-pink-500"
+                  style={{ animationDelay: `${index * 0.1}s` }}
                 />
               ))}
             </div>
@@ -333,430 +756,754 @@ export default function RoleAssigner() {
     );
   }
 
-  // Result screen (public mode)
-  if (viewState === 'result') {
-    return (
-      <div className="ra-container">
-        <Confetti active={showConfetti} />
+  if (viewState === 'results') {
+    const label = resultLabel(mode);
+    const allParticipantResultsRevealed = assignments.length > 0 && assignments.every(
+      (assignment) => revealedParticipantKeys.has(createLookupKey(assignment.name)),
+    );
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-block animate-bounce-in">
-            <span className="text-6xl drop-shadow-lg">🎉</span>
+    if (revealMode === 'public') {
+      return (
+        <div className="ra-page-shell">
+          <header className="mb-8 text-center">
+            <span className="inline-block animate-bounce-in text-6xl drop-shadow-lg" aria-hidden="true">🎉</span>
+            <h1 className="mt-4 text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">
+              {label} 배정 완료!
+            </h1>
+          </header>
+
+          <PublicResultsGrid assignments={assignments} label={label} />
+
+          <div className="ra-public-share mb-4">
+            <ShareControl
+              url={shareLinks.all.url}
+              disabledReason={shareLinks.all.error}
+              label="결과 링크 복사"
+            />
           </div>
-          <h2 className="mt-4 text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-pink-500 to-purple-500">
-            역할 배정 완료!
-          </h2>
-        </div>
 
-        {/* Results Grid */}
-        <div className={`grid gap-3 mb-8 ${
-          assignedRoles.length <= 4
-            ? 'grid-cols-1'
-            : assignedRoles.length <= 8
-              ? 'grid-cols-1 sm:grid-cols-2'
-              : 'grid-cols-2 sm:grid-cols-3'
-        }`}>
-          {assignedRoles.map((role, index) => (
-            <div
-              key={index}
-              className={`relative overflow-hidden rounded-2xl transition-all duration-500 ${
-                role.revealed ? 'animate-reveal' : 'opacity-0 scale-95'
-              }`}
-              style={{ animationDelay: `${index * 0.08}s` }}
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
-              <div className={`relative bg-slate-800/90 backdrop-blur-sm border border-white/10 rounded-2xl ${
-                assignedRoles.length > 4 ? 'p-3' : 'p-4'
-              }`}>
-                <div className="flex items-center gap-3 mb-2">
-                  <div className={`rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-pink-500/30 ${
-                    assignedRoles.length > 4 ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-base'
-                  }`}>
-                    {role.participantName.charAt(0).toUpperCase()}
-                  </div>
-                  <span className={`font-bold text-white truncate ${
-                    assignedRoles.length > 4 ? 'text-sm' : 'text-base'
-                  }`}>
-                    {role.participantName}
-                  </span>
-                </div>
-                <div className={`w-full rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 shadow-lg shadow-orange-500/30 text-center ${
-                  assignedRoles.length > 4 ? 'px-3 py-1.5' : 'px-4 py-2'
-                }`}>
-                  <span className={`font-black text-white ${
-                    assignedRoles.length > 4 ? 'text-sm' : 'text-base'
-                  }`}>
-                    {role.role}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+          <div className="mt-7 flex gap-4">
+            <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary flex-1">
+              <span aria-hidden="true">🔄</span>
+              새 게임
+            </button>
+            <button type="button" onClick={() => setConfirmation('reassign')} className="ra-btn-primary flex-1">
+              <span aria-hidden="true">🎲</span>
+              다시 배정
+            </button>
+          </div>
 
-        {/* Share Button */}
-        <button
-          onClick={shareResult}
-          className="w-full mb-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-bold hover:from-emerald-600 hover:to-cyan-600 transition-all active:scale-[0.98] shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2"
-        >
-          {showCopied ? (
-            <>
-              <span>✓</span>
-              복사됨!
-            </>
-          ) : (
-            <>
-              <span>📋</span>
-              결과 공유하기
-            </>
-          )}
-        </button>
-
-        {/* Action Buttons */}
-        <div className="flex gap-4">
-          <button
-            onClick={resetGame}
-            className="flex-1 ra-btn-secondary"
+          <AccessibleDialog
+            open={confirmation !== null}
+            onClose={() => setConfirmation(null)}
+            title={confirmation === 'reassign' ? '결과를 다시 배정할까요?' : '새 게임을 시작할까요?'}
+            description="이미 복사하거나 공유한 링크는 취소되지 않으며, 이전 결과를 계속 보여줍니다."
           >
-            <span className="mr-2">🔄</span>
+            <div className="ra-dialog-actions">
+              <button type="button" onClick={() => setConfirmation(null)} className="ra-btn-secondary">취소</button>
+              <button
+                type="button"
+                onClick={confirmation === 'reassign' ? confirmReassign : resetSetup}
+                className="ra-btn-primary"
+              >
+                {confirmation === 'reassign' ? '다시 배정' : '새 게임 시작'}
+              </button>
+            </div>
+          </AccessibleDialog>
+        </div>
+      );
+    }
+
+    return (
+      <div className="ra-page-shell">
+        <header className="ra-results-header">
+          <div className="ra-status-symbol" aria-hidden="true">✓</div>
+          <div>
+            <p className="ra-section-kicker">배정 완료</p>
+            <h1 className="mt-1 text-3xl font-black text-white">{label} 배정이 끝났습니다</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              참가자별로 확인하거나 전체 결과를 공개할 수 있습니다.
+            </p>
+          </div>
+        </header>
+
+        <div className="ra-result-actions">
+          <button
+            type="button"
+            onClick={() => {
+              if (allParticipantResultsRevealed) setRevealedParticipantKeys(new Set());
+              else setShowAllConfirm(true);
+            }}
+            aria-pressed={allParticipantResultsRevealed}
+            className="ra-btn-primary"
+          >
+            <span aria-hidden="true">{allParticipantResultsRevealed ? '◉' : '◎'}</span>
+            {allParticipantResultsRevealed ? '모두 숨기기' : '전체 결과 보기'}
+          </button>
+        </div>
+
+        <section className="ra-shared-result-link" aria-labelledby="shared-result-link-title">
+          <h2 id="shared-result-link-title" className="text-base font-black text-white">
+            전체 결과 링크
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-slate-300">
+            모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
+            다른 참가자의 이름을 입력해도 해당 결과를 볼 수 있습니다.
+          </p>
+          <ShareControl
+            url={shareLinks.shared.url}
+            disabledReason={shareLinks.shared.error}
+            label="전체 결과 링크 복사"
+          />
+        </section>
+
+        <section className="mt-10" aria-labelledby="participant-results-title">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <h2 id="participant-results-title" className="text-xl font-black text-white">참가자 결과</h2>
+            <span className="text-sm font-bold text-pink-200">{assignments.length}명</span>
+          </div>
+          <ul className="ra-participant-results mt-4">
+            {assignments.map((assignment) => {
+              const participantKey = createLookupKey(assignment.name);
+              const personalLink = shareLinks.personal.get(participantKey);
+              const participantRevealed = revealedParticipantKeys.has(participantKey);
+              return (
+                <li key={participantKey} className="ra-participant-result-row">
+                  <div className="ra-participant-identity">
+                    <ParticipantAvatar size="list" />
+                    <div className="min-w-0" aria-live="polite">
+                      <span className="break-words font-black text-white">{assignment.name}</span>
+                      {participantRevealed && (
+                        <p className="mt-1 break-words font-black text-cyan-200">
+                          <span className="sr-only">{label}: </span>
+                          <span>{assignment.role}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ra-row-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (participantRevealed) {
+                          setRevealedParticipantKeys((current) => {
+                            const next = new Set(current);
+                            next.delete(participantKey);
+                            return next;
+                          });
+                        } else {
+                          setPendingParticipantReveal(assignment);
+                        }
+                      }}
+                      aria-pressed={participantRevealed}
+                      className="ra-btn-tertiary"
+                    >
+                      {participantRevealed ? '다시 숨기기' : '결과 보기'}
+                    </button>
+                    <ShareControl
+                      compact
+                      url={personalLink?.url ?? null}
+                      disabledReason={personalLink?.error ?? '개별 결과 링크를 준비하지 못했습니다.'}
+                      label="개별 결과 링크 복사"
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        <div className="ra-bottom-actions">
+          <button type="button" onClick={() => setConfirmation('new-game')} className="ra-btn-secondary">
             새 게임
           </button>
-          <button
-            onClick={reassign}
-            className="flex-1 ra-btn-primary"
-          >
-            <span className="mr-2">🎲</span>
+          <button type="button" onClick={() => setConfirmation('reassign')} className="ra-btn-tertiary">
             다시 배정
           </button>
         </div>
+
+        <AccessibleDialog
+          open={showAllConfirm}
+          onClose={() => setShowAllConfirm(false)}
+          title="전체 결과를 공개할까요?"
+          description="같은 화면에 모든 참가자의 결과가 한꺼번에 표시됩니다. 주변 사람이 함께 봐도 괜찮을 때만 계속해주세요."
+        >
+          <div className="ra-dialog-actions">
+            <button type="button" onClick={() => setShowAllConfirm(false)} className="ra-btn-secondary">
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAllConfirm(false);
+                setRevealedParticipantKeys(new Set(
+                  assignments.map((assignment) => createLookupKey(assignment.name)),
+                ));
+              }}
+              className="ra-btn-primary"
+            >
+              전체 결과 공개
+            </button>
+          </div>
+        </AccessibleDialog>
+
+        <AccessibleDialog
+          open={Boolean(pendingParticipantReveal)}
+          onClose={() => setPendingParticipantReveal(null)}
+          title={pendingParticipantReveal
+            ? `${pendingParticipantReveal.name}님의 결과를 공개할까요?`
+            : '참가자 결과를 공개할까요?'}
+          description="승인하면 이 참가자의 결과가 목록에 표시되고, 다시 숨길 때까지 유지됩니다. 주변 사람이 함께 봐도 괜찮을 때만 계속해주세요."
+        >
+          <div className="ra-dialog-actions">
+            <button
+              type="button"
+              onClick={() => setPendingParticipantReveal(null)}
+              className="ra-btn-secondary"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!pendingParticipantReveal) return;
+                const participantKey = createLookupKey(pendingParticipantReveal.name);
+                setRevealedParticipantKeys((current) => new Set(current).add(participantKey));
+                setPendingParticipantReveal(null);
+              }}
+              className="ra-btn-primary"
+            >
+              결과 공개
+            </button>
+          </div>
+        </AccessibleDialog>
+
+        <AccessibleDialog
+          open={confirmation !== null}
+          onClose={() => setConfirmation(null)}
+          title={confirmation === 'reassign' ? '결과를 다시 배정할까요?' : '새 게임을 시작할까요?'}
+          description="이미 복사하거나 공유한 링크는 취소되지 않으며, 이전 결과를 계속 보여줍니다."
+        >
+          <div className="ra-dialog-actions">
+            <button type="button" onClick={() => setConfirmation(null)} className="ra-btn-secondary">취소</button>
+            <button
+              type="button"
+              onClick={confirmation === 'reassign' ? confirmReassign : resetSetup}
+              className="ra-btn-primary"
+            >
+              {confirmation === 'reassign' ? '다시 배정' : '새 게임 시작'}
+            </button>
+          </div>
+        </AccessibleDialog>
       </div>
     );
   }
 
-  // Setup screen (public mode)
+  const participantSectionError = issueFor('participants');
+  const roleSectionError = issueFor('roles');
+
   return (
-    <>
-      {/* Server Error Modal */}
-      {showServerError && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowServerError(false)}
-          />
-          <div className="relative w-full max-w-sm animate-pop">
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl border border-red-500/30 shadow-2xl shadow-red-500/10 overflow-hidden">
-              <div className="bg-red-500/10 px-6 py-8 text-center">
-                <div className="text-6xl mb-4 animate-bounce-in">🔌</div>
-                <h3 className="text-xl font-bold text-white">{serverError}</h3>
-                <p className="text-sm text-slate-400 mt-2">잠시 후 다시 시도해주세요</p>
-              </div>
-              <div className="p-4 space-y-3">
-                <button
-                  onClick={() => {
-                    setShowServerError(false);
-                    handleEnterPrivateMode();
-                  }}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold hover:from-pink-600 hover:to-purple-600 transition-all active:scale-[0.98]"
-                >
-                  🔄 다시 시도
-                </button>
-                <button
-                  onClick={() => setShowServerError(false)}
-                  className="w-full py-3 rounded-xl bg-slate-700/50 text-slate-300 font-medium hover:bg-slate-700 transition-all"
-                >
-                  닫기
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Validation Error Modal */}
-      {showValidationError && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowValidationError(false)}
-          />
-          <div className="relative w-full max-w-sm animate-pop">
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl border border-orange-500/30 shadow-2xl shadow-orange-500/10 overflow-hidden">
-              <div className="bg-orange-500/10 px-6 py-8 text-center">
-                <div className="text-6xl mb-4 animate-bounce-in">⚠️</div>
-                <h3 className="text-xl font-bold text-white">{validationErrorMessage}</h3>
-                <p className="text-sm text-slate-400 mt-2">입력 내용을 확인하고 다시 시도해주세요</p>
-              </div>
-              <div className="p-4">
-                <button
-                  onClick={() => setShowValidationError(false)}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold hover:from-pink-600 hover:to-purple-600 transition-all active:scale-[0.98]"
-                >
-                  확인
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="ra-container">
-        {/* Hero Title */}
-        <div className="text-center mb-8 pt-4">
-          <h1 className="text-4xl sm:text-5xl font-black mb-2">
-            <span className="mr-2">🎭</span>
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
-              역할 뽑기
-            </span>
-          </h1>
-          <p className="text-slate-400 text-sm sm:text-base">마피아, 마니또 역할을 실시간으로 몰래 뽑아보세요!</p>
-        </div>
-
-        {/* Mode Switch - only show if multiplayer is available */}
-      {isMultiplayerReady && (
-        <div className="flex justify-center mb-8">
-          <div className="inline-flex p-1.5 rounded-2xl bg-gradient-to-r from-slate-800 to-slate-900 shadow-xl">
-            <button
-              onClick={() => setRevealMode('public')}
-              className={`px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 ${
-                revealMode === 'public'
-                  ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-lg shadow-pink-500/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              전체 공개
-            </button>
-            <button
-              onClick={handleEnterPrivateMode}
-              disabled={isCheckingServer}
-              className="px-6 py-3 rounded-xl text-sm font-bold transition-all duration-300 text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-2"
-            >
-              {isCheckingServer && (
-                <div className="w-4 h-4 border-2 border-slate-400 border-t-white rounded-full animate-spin" />
-              )}
-              개별 공개
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Participants Section */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">👥</span>
-            <h3 className="text-xl font-black text-white">
-              참가자
-              <span className="ml-2 px-2 py-1 text-sm rounded-lg bg-pink-500/20 text-pink-400">
-                {participants.filter(p => p.name.trim()).length}명
-              </span>
-            </h3>
-          </div>
-          <button
-            onClick={resetParticipants}
-            className="w-9 h-9 rounded-xl bg-slate-800/50 text-slate-500 hover:text-pink-400 hover:bg-slate-700 transition-all duration-200 flex items-center justify-center"
-            title="Reset"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-        </div>
-
-        <div className={`grid gap-3 ${
-          participants.length <= 4
-            ? 'grid-cols-1'
-            : participants.length <= 8
-              ? 'grid-cols-1 sm:grid-cols-2'
-              : 'grid-cols-2 sm:grid-cols-3'
-        }`}>
-          {participants.map((p, index) => {
-            const isInitial = initialParticipantIds.current.has(p.id);
-            return (
-            <div
-              key={p.id}
-              className={`group flex gap-2 ${isInitial ? '' : 'animate-pop'}`}
-              style={isInitial ? { animationDelay: `${index * 0.03}s` } : undefined}
-            >
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={p.name}
-                  onChange={(e) => updateParticipant(p.id, e.target.value)}
-                  placeholder={`참가자 ${index + 1}`}
-                  className={`ra-input w-full shadow-inner ${participants.length > 4 ? 'py-2.5 text-sm' : ''}`}
-                />
-              </div>
-              {participants.length > 2 && (
-                <button
-                  onClick={() => removeParticipant(p.id)}
-                  className={`rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-all duration-300 flex items-center justify-center active:scale-90 ${
-                    participants.length > 4 ? 'w-10 h-10 text-base' : 'w-12 h-12 text-xl'
-                  }`}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          );})}
-        </div>
-
-        <button
-          onClick={addParticipant}
-          className="w-full mt-3 py-3 rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/50 text-slate-500 hover:border-pink-500/50 hover:text-pink-400 hover:bg-pink-500/5 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
-        >
-          <span className="text-lg">＋</span>
-          참가자 추가
-        </button>
-      </div>
-
-      {/* Roles Section */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🎭</span>
-            <h3 className="text-xl font-black text-white">역할 설정</h3>
-          </div>
-          <button
-            onClick={resetRoles}
-            className="w-9 h-9 rounded-xl bg-slate-800/50 text-slate-500 hover:text-cyan-400 hover:bg-slate-700 transition-all duration-200 flex items-center justify-center"
-            title="Reset"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-        </div>
-
-        <div className={`grid gap-3 ${
-          roles.length <= 3
-            ? 'grid-cols-1'
-            : 'grid-cols-1 sm:grid-cols-2'
-        }`}>
-          {roles.map((role, index) => {
-            const isInitial = initialRoleIds.current.has(role.id);
-            return (
-            <div
-              key={role.id}
-              className={`group flex gap-2 ${isInitial ? '' : 'animate-pop'}`}
-              style={isInitial ? { animationDelay: `${index * 0.03}s` } : undefined}
-            >
-              <div className="flex-1 min-w-0">
-                <input
-                  type="text"
-                  value={role.name}
-                  onChange={(e) => updateRole(role.id, 'name', e.target.value)}
-                  placeholder="역할 이름"
-                  className={`ra-input w-full shadow-inner ${roles.length > 3 ? 'py-2.5 text-sm' : ''}`}
-                />
-              </div>
-              <div className="flex items-center bg-slate-900 border-2 border-slate-800 rounded-2xl overflow-hidden shrink-0">
-                <button
-                  onClick={() => updateRole(role.id, 'count', Math.max(0, role.count - 1))}
-                  className={`bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-bold ${
-                    roles.length > 3 ? 'w-8 h-10 text-base' : 'w-10 h-12 text-lg'
-                  }`}
-                >
-                  −
-                </button>
-                <div className={`flex items-center justify-center border-x-2 border-slate-800/50 ${
-                  roles.length > 3 ? 'w-10 h-10' : 'w-12 h-12'
-                }`}>
-                  <span className={`font-bold text-white ${roles.length > 3 ? 'text-base' : 'text-lg'}`}>{role.count}</span>
-                </div>
-                <button
-                  onClick={() => updateRole(role.id, 'count', role.count + 1)}
-                  className={`bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-bold ${
-                    roles.length > 3 ? 'w-8 h-10 text-base' : 'w-10 h-12 text-lg'
-                  }`}
-                >
-                  +
-                </button>
-              </div>
-              {roles.length > 1 && (
-                <button
-                  onClick={() => removeRole(role.id)}
-                  className={`shrink-0 rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white transition-all duration-300 flex items-center justify-center active:scale-90 ${
-                    roles.length > 3 ? 'w-10 h-10 text-base' : 'w-12 h-12 text-xl'
-                  }`}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          );})}
-        </div>
-
-        <p className="text-xs text-slate-500 pl-1 mt-3 flex items-center gap-2">
-          <span>💡</span>
-          * 0명으로 설정하면 나머지 인원이 해당 역할로 배정됩니다
+    <div className="ra-page-shell">
+      <header className="ra-hero mb-8">
+        <h1 className="text-4xl font-black sm:text-5xl">
+          <span className="mr-2" aria-hidden="true">🎭</span>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400">
+            역할 뽑기
+          </span>
+        </h1>
+        <p className="mt-2 text-sm text-slate-400 sm:text-base">
+          마피아, 마니또 역할을 간편하고 몰래 뽑아보세요!
         </p>
+      </header>
 
+      <div className="ra-reveal-switch" role="radiogroup" aria-label="공개 방식">
         <button
-          onClick={addRole}
-          className="w-full mt-3 py-3 rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/50 text-slate-500 hover:border-cyan-500/50 hover:text-cyan-400 hover:bg-cyan-500/5 transition-all duration-300 font-bold flex items-center justify-center gap-2 active:scale-[0.98]"
+          type="button"
+          role="radio"
+          aria-checked={revealMode === 'public'}
+          onClick={() => setRevealMode('public')}
+          className={revealMode === 'public' ? 'ra-reveal-option ra-reveal-option-active' : 'ra-reveal-option'}
         >
-          <span className="text-lg">＋</span>
-          역할 추가
+          전체 공개
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={revealMode === 'individual'}
+          onClick={() => setRevealMode('individual')}
+          className={revealMode === 'individual' ? 'ra-reveal-option ra-reveal-option-active' : 'ra-reveal-option'}
+        >
+          개별 공개
         </button>
       </div>
+      <p className="sr-only" aria-live="polite">
+        {revealMode === 'public'
+          ? '배정이 끝나면 모든 결과를 한 화면에 바로 표시합니다.'
+          : '모든 결과를 숨긴 상태에서 필요한 참가자만 확인합니다.'}
+      </p>
 
-      {/* Assign Button */}
-      <button
-        onClick={assignRoles}
-        className="ra-btn-primary w-full text-lg py-5"
-      >
-        <span className="mr-3 text-2xl">🎲</span>
-        역할 배정하기
-        <span className="ml-3 text-2xl">🎲</span>
-      </button>
+      <form onSubmit={handleAssign} noValidate>
+        <section
+          ref={setFieldRef('participants')}
+          tabIndex={-1}
+          className="mb-8"
+          aria-labelledby="participants-title"
+          aria-describedby={participantSectionError ? 'participants-error' : 'participants-help'}
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl" aria-hidden="true">👥</span>
+              <h2 id="participants-title" className="text-xl font-black text-white">
+                참가자
+                <span className="ml-2 rounded-lg bg-pink-500/20 px-2 py-1 text-sm text-pink-400">
+                  {participants.filter((participant) => normalizeDisplayValue(participant.name)).length}명
+                </span>
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setParticipants(initialParticipants());
+                participantIdRef.current = 3;
+                setIssues([]);
+                clearAllInputLimitWarnings();
+              }}
+              className="ra-icon-button ra-setup-reset hover:text-pink-400"
+              aria-label="참가자 입력 초기화"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </div>
+          <p id="participants-help" className="sr-only">참가자는 최소 2명, 최대 20명입니다.</p>
+          {participantSectionError && (
+            <p id="participants-error" className="ra-field-error" role="alert">{participantSectionError}</p>
+          )}
 
-      {/* Guide Section */}
-      <section className="mt-12 bg-slate-800/50 backdrop-blur-sm rounded-3xl border border-slate-700/50 p-6 space-y-6">
-        {/* Why */}
+          <div className={`grid gap-3 ${
+            participants.length <= 4
+              ? 'grid-cols-1'
+              : participants.length <= 8
+                ? 'grid-cols-1 sm:grid-cols-2'
+                : 'grid-cols-2 sm:grid-cols-3'
+          }`}>
+            {participants.map((participant, index) => {
+              const field: ValidationField = `participant:${participant.id}`;
+              const error = issueFor(field);
+              const warning = inputLimitWarnings[field];
+              const inputId = `participant-input-${participant.id}`;
+              const warningId = `participant-limit-${participant.id}`;
+              const errorId = `participant-error-${participant.id}`;
+              const describedBy = [warning ? warningId : '', error ? errorId : '']
+                .filter(Boolean)
+                .join(' ') || undefined;
+              const warningMotionClass = warning
+                ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
+                : '';
+              return (
+                <div
+                  key={participant.id}
+                  className={`ra-input-row group min-w-0 ${index > 1 ? 'animate-pop' : ''}`}
+                >
+                  <div className="flex min-w-0 gap-2">
+                    <div className="min-w-0 flex-1">
+                    <input
+                      ref={setFieldRef(field) as (element: HTMLInputElement | null) => void}
+                      id={inputId}
+                      type="text"
+                      value={participant.name}
+                      placeholder={`참가자 ${index + 1}`}
+                      onChange={(event) => {
+                        applyBoundedNameInput(
+                          field,
+                          event.currentTarget.value,
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                          composingFieldsRef.current.has(field),
+                        );
+                      }}
+                      onCompositionStart={() => {
+                        composingFieldsRef.current.add(field);
+                        clearInputLimitWarning(field);
+                      }}
+                      onCompositionEnd={(event) => {
+                        composingFieldsRef.current.delete(field);
+                        applyBoundedNameInput(
+                          field,
+                          event.currentTarget.value,
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                        );
+                      }}
+                      onBlur={(event) => {
+                        composingFieldsRef.current.delete(field);
+                        applyBoundedNameInput(
+                          field,
+                          normalizeDisplayValue(event.currentTarget.value),
+                          LIMITS.maxParticipantCodePoints,
+                          LIMITS.maxParticipantBytes,
+                          (nextValue) => setParticipants((current) => current.map((item) => (
+                            item.id === participant.id ? { ...item, name: nextValue } : item
+                          ))),
+                          false,
+                          false,
+                        );
+                      }}
+                      aria-invalid={Boolean(error)}
+                      aria-describedby={describedBy}
+                      aria-label={`참가자 ${index + 1}`}
+                      autoComplete="off"
+                      className={`ra-input w-full shadow-inner ${participants.length > 4 ? 'min-h-11 py-2.5 text-sm' : ''}${warningMotionClass}`}
+                    />
+                    {(warning || error) && <div className="ra-input-feedback">
+                      {warning && (
+                        <span
+                          key={warning.sequence}
+                          id={warningId}
+                          className="ra-input-limit-message"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {warning.message}
+                        </span>
+                      )}
+                      {error && <span id={errorId} className="ra-field-error" role="alert">{error}</span>}
+                    </div>}
+                    </div>
+                    {participants.length > LIMITS.minParticipants && (
+                      <button
+                        type="button"
+                        onClick={() => removeParticipant(participant.id)}
+                        className={`flex shrink-0 items-center justify-center rounded-xl bg-red-500/20 font-bold text-red-400 transition-all duration-300 hover:bg-red-500 hover:text-white active:scale-90 ${
+                          participants.length > 4 ? 'h-11 w-11 text-base' : 'h-12 w-12 text-xl'
+                        }`}
+                        aria-label={`참가자 ${index + 1} 삭제`}
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={addParticipant}
+            disabled={participants.length >= LIMITS.maxParticipants}
+            className="ra-add-button ra-add-participant"
+          >
+            <span aria-hidden="true">＋</span>
+            참가자 추가
+          </button>
+        </section>
+
+        <section
+            ref={setFieldRef('roles')}
+            tabIndex={-1}
+            className="mb-8"
+            aria-labelledby="roles-title"
+            aria-describedby={roleSectionError ? 'roles-error' : 'roles-help'}
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl" aria-hidden="true">🎭</span>
+                <h2 id="roles-title" className="text-xl font-black text-white">역할 설정</h2>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={mode === 'manito'}
+                  aria-label="마니또 모드"
+                  onClick={() => {
+                    setMode((current) => current === 'manito' ? 'role' : 'manito');
+                    setIssues([]);
+                    setRuntimeError('');
+                  }}
+                  className="flex min-h-11 items-center gap-2 text-sm text-slate-400"
+                >
+                  <span aria-hidden="true">🎁 마니또</span>
+                  <span className={`relative h-6 w-12 rounded-full transition-colors ${
+                    mode === 'manito' ? 'bg-gradient-to-r from-pink-500 to-purple-500' : 'bg-slate-600'
+                  }`} aria-hidden="true">
+                    <span
+                      className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                        mode === 'manito' ? 'translate-x-6' : 'translate-x-0'
+                      }`}
+                    />
+                  </span>
+                </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoles(initialRoles());
+                  roleIdRef.current = 2;
+                  setIssues([]);
+                  clearAllInputLimitWarnings();
+                }}
+                className="ra-icon-button ra-setup-reset"
+                aria-label="역할 입력 초기화"
+                disabled={mode === 'manito'}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              </div>
+            </div>
+            <p id="roles-help" className="sr-only">
+              일반 역할은 역할별 인원수를 설정합니다. 마니또는 자기 자신을 제외하고 한 명씩 배정합니다.
+            </p>
+            {roleSectionError && (
+              <p id="roles-error" className="ra-field-error" role="alert">{roleSectionError}</p>
+            )}
+
+            {mode === 'role' ? <>
+            <div className={`grid gap-3 ${roles.length <= 3 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
+              {roles.map((role, index) => {
+                const nameField: ValidationField = `role-name:${role.id}`;
+                const countField: ValidationField = `role-count:${role.id}`;
+                const nameError = issueFor(nameField);
+                const countError = issueFor(countField);
+                const warning = inputLimitWarnings[nameField];
+                const nameId = `role-name-${role.id}`;
+                const warningId = `role-name-limit-${role.id}`;
+                const nameErrorId = `role-name-error-${role.id}`;
+                const countId = `role-count-${role.id}`;
+                const describedBy = [warning ? warningId : '', nameError ? nameErrorId : '']
+                  .filter(Boolean)
+                  .join(' ') || undefined;
+                const warningMotionClass = warning
+                  ? ` ra-input-limit-warning ra-input-limit-warning-${warning.sequence % 2 === 0 ? 'even' : 'odd'}`
+                  : '';
+                const numericCount = Number.isFinite(Number(role.count)) ? Number(role.count) : 0;
+                return (
+                  <div key={role.id} className={`ra-role-row min-w-0 ${index > 0 ? 'animate-pop' : ''}`}>
+                    <div className="flex min-w-0 gap-2">
+                      <div className="min-w-0 flex-1">
+                      <input
+                        ref={setFieldRef(nameField) as (element: HTMLInputElement | null) => void}
+                        id={nameId}
+                        type="text"
+                        value={role.name}
+                        placeholder="역할 이름"
+                        onChange={(event) => {
+                          applyBoundedNameInput(
+                            nameField,
+                            event.currentTarget.value,
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                            composingFieldsRef.current.has(nameField),
+                          );
+                        }}
+                        onCompositionStart={() => {
+                          composingFieldsRef.current.add(nameField);
+                          clearInputLimitWarning(nameField);
+                        }}
+                        onCompositionEnd={(event) => {
+                          composingFieldsRef.current.delete(nameField);
+                          applyBoundedNameInput(
+                            nameField,
+                            event.currentTarget.value,
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                          );
+                        }}
+                        onBlur={(event) => {
+                          composingFieldsRef.current.delete(nameField);
+                          applyBoundedNameInput(
+                            nameField,
+                            normalizeDisplayValue(event.currentTarget.value),
+                            LIMITS.maxRoleCodePoints,
+                            LIMITS.maxRoleBytes,
+                            (nextValue) => setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, name: nextValue } : item
+                            ))),
+                            false,
+                            false,
+                          );
+                        }}
+                        aria-invalid={Boolean(nameError)}
+                        aria-describedby={describedBy}
+                        aria-label={`역할 ${index + 1}`}
+                        className={`ra-input w-full shadow-inner ${roles.length > 3 ? 'min-h-11 py-2.5 text-sm' : ''}${warningMotionClass}`}
+                      />
+                      {(warning || nameError) && <div className="ra-input-feedback">
+                        {warning && (
+                          <span
+                            key={warning.sequence}
+                            id={warningId}
+                            className="ra-input-limit-message"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {warning.message}
+                          </span>
+                        )}
+                        {nameError && (
+                          <span id={nameErrorId} className="ra-field-error" role="alert">{nameError}</span>
+                        )}
+                      </div>}
+                      </div>
+                      <div className="shrink-0">
+                      <div className="flex items-center overflow-hidden rounded-2xl border-2 border-slate-800 bg-slate-900">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoles((current) => current.map((item) => item.id === role.id
+                              ? { ...item, count: String(Math.max(0, numericCount - 1)) }
+                              : item));
+                            clearIssuesFor(countField, 'roles');
+                          }}
+                          className={`min-w-11 bg-slate-900 font-bold text-slate-400 transition-colors hover:bg-slate-800 hover:text-white ${roles.length > 3 ? 'h-11' : 'h-12 text-lg'}`}
+                          aria-label={`${index + 1}번째 역할 인원 줄이기`}
+                        >
+                          −
+                        </button>
+                        <input
+                          ref={setFieldRef(countField) as (element: HTMLInputElement | null) => void}
+                          id={countId}
+                          type="number"
+                          min="0"
+                          max="20"
+                          step="1"
+                          inputMode="numeric"
+                          value={role.count}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setRoles((current) => current.map((item) => (
+                              item.id === role.id ? { ...item, count: value } : item
+                            )));
+                            clearIssuesFor(countField, 'roles');
+                          }}
+                          aria-invalid={Boolean(countError)}
+                          aria-describedby={`role-count-help-${role.id}${countError ? ` role-count-error-${role.id}` : ''}`}
+                          aria-label="인원"
+                          className={`ra-count-stepper-input border-x-2 border-slate-800/50 bg-slate-900 text-center font-bold text-white outline-none ${roles.length > 3 ? 'h-11 w-10' : 'h-12 w-12 text-lg'}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoles((current) => current.map((item) => item.id === role.id
+                              ? { ...item, count: String(Math.min(LIMITS.maxParticipants, numericCount + 1)) }
+                              : item));
+                            clearIssuesFor(countField, 'roles');
+                          }}
+                          className={`min-w-11 bg-slate-900 font-bold text-slate-400 transition-colors hover:bg-slate-800 hover:text-white ${roles.length > 3 ? 'h-11' : 'h-12 text-lg'}`}
+                          aria-label={`${index + 1}번째 역할 인원 늘리기`}
+                        >
+                          +
+                        </button>
+                      </div>
+                      <p id={`role-count-help-${role.id}`} className="sr-only">0명은 나머지 인원을 뜻합니다.</p>
+                      {countError && (
+                        <p id={`role-count-error-${role.id}`} className="ra-field-error" role="alert">{countError}</p>
+                      )}
+                      </div>
+                      {roles.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeRole(role.id)}
+                          className={`flex shrink-0 items-center justify-center rounded-xl bg-red-500/20 font-bold text-red-400 transition-all duration-300 hover:bg-red-500 hover:text-white active:scale-90 ${roles.length > 3 ? 'h-11 w-11 text-base' : 'h-12 w-12 text-xl'}`}
+                          aria-label={`역할 ${index + 1} 삭제`}
+                        >
+                          <span aria-hidden="true">×</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="mt-3 flex items-center gap-2 pl-1 text-xs text-slate-400">
+              <span aria-hidden="true">💡</span>
+              * 0명으로 설정하면 나머지 인원이 해당 역할로 배정됩니다
+            </p>
+            <button
+              type="button"
+              onClick={addRole}
+              disabled={roles.length >= LIMITS.maxRoles}
+              className="ra-add-button"
+            >
+              <span aria-hidden="true">＋</span>
+              역할 추가
+            </button>
+            </> : (
+              <p className="rounded-xl bg-pink-500/10 px-4 py-3 text-sm leading-6 text-pink-100">
+                🎁 참가자끼리 한 명씩 이어지며, 자기 자신은 배정되지 않습니다.
+              </p>
+            )}
+          </section>
+
+        {runtimeError && (
+          <p className="ra-runtime-error" role="alert" tabIndex={-1}>{runtimeError}</p>
+        )}
+
+        <button type="submit" className="ra-btn-primary w-full py-5 text-lg">
+          <span className="mr-3 text-2xl" aria-hidden="true">🎲</span>
+          {mode === 'manito' ? '마니또 배정하기' : '역할 배정하기'}
+          <span className="ml-3 text-2xl" aria-hidden="true">🎲</span>
+        </button>
+      </form>
+
+      <section className="ra-guide" aria-labelledby="guide-title">
         <div>
-          <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-2">
-            <span>💭</span> 만든 이유
+          <h2 id="guide-title" className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
+            <span aria-hidden="true">✨</span> 주요 기능
           </h2>
-          <p className="text-slate-300 leading-relaxed">마피아 게임할 때 역할 정하기가 너무 귀찮았어요. 쪽지 쓰고, 접고, 섞고... 그래서 만들었습니다. 이제 폰 하나로 1초만에 역할 배정 끝!</p>
-        </div>
-
-        {/* Features */}
-        <div>
-          <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
-            <span>✨</span> 주요 기능
-          </h3>
           <ul className="space-y-2 text-slate-300">
-            <li>⚡ 실시간 동기화 - 방장이 배정하면 즉시 모두에게 전달</li>
-            <li>🤫 완벽한 비밀 유지 - 절대 남의 역할을 볼 수 없음</li>
-            <li>🎯 스마트 자동 배정 - 인원수 맞추기 귀찮을 때 0명 설정!</li>
+            <li>🤫 숨김 공개 - 한 기기에서 한 명씩 몰래 확인</li>
+            <li>🔗 결과 링크 - 전체 결과·개별 결과 링크 복사</li>
+            <li>🎯 스마트 자동 배정 - 0명 역할에 나머지 인원 배정</li>
           </ul>
         </div>
-
-        {/* How to use */}
         <div>
-          <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-3">
-            <span>🎮</span> 사용 방법
+          <h3 className="mb-3 flex items-center gap-2 text-lg font-bold text-white">
+            <span aria-hidden="true">🎮</span> 사용 방법
           </h3>
           <div className="space-y-3">
-            <div className="bg-slate-700/50 rounded-xl p-3">
-              <p className="text-cyan-400 font-medium mb-1">🌐 전체 공개</p>
-              <p className="text-slate-400 text-sm">한 화면에서 모든 결과 공개. 스파이 게임 아닐 때, 빠르게 역할만 정하고 싶을 때!</p>
+            <div className="rounded-xl bg-slate-700/50 p-3">
+              <p className="mb-1 font-medium text-cyan-400">🌐 전체 공개</p>
+              <p className="text-sm text-slate-400">배정 직후 한 화면에서 모든 결과를 확인합니다.</p>
             </div>
-            <div className="bg-slate-700/50 rounded-xl p-3">
-              <p className="text-pink-400 font-medium mb-1">🤫 개별 공개 (추천!)</p>
-              <p className="text-slate-400 text-sm">각자 폰으로 접속해서 본인 역할만 몰래 확인. 마피아, 스파이, 라이어 게임 필수!</p>
+            <div className="ra-guide-individual rounded-xl bg-slate-700/50 p-3">
+              <p className="mb-1 font-medium text-pink-400">🤫 개별 공개</p>
+              <p className="text-sm text-slate-400">필요한 참가자만 공개하고 전체 결과 또는 개별 결과 링크를 복사합니다.</p>
+              <dl className="mt-3 space-y-3 border-t border-slate-600/60 pt-3 text-sm">
+                <div>
+                  <dt className="font-bold text-pink-200">전체 결과 링크</dt>
+                  <dd className="mt-1 leading-6 text-slate-300">
+                    모든 참가자의 결과가 포함됩니다. 이름을 입력해 한 명씩 확인하며,
+                    다른 참가자의 이름을 입력하면 그 참가자의 결과도 볼 수 있습니다.
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold text-pink-200">개별 결과 링크</dt>
+                  <dd className="mt-1 leading-6 text-slate-300">
+                    해당 참가자의 결과만 볼 수 있습니다.
+                  </dd>
+                </div>
+              </dl>
             </div>
           </div>
         </div>
-
-        {/* Tip */}
-        <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-4">
-          <p className="text-cyan-400 font-medium mb-1">💡 팁</p>
-          <p className="text-cyan-300/80 text-sm">역할 수를 0으로 설정하면 나머지 인원이 자동 배정됩니다. 예: 마피아 2명, 시민 0명 → 나머지 전원 시민!</p>
-        </div>
       </section>
-      </div>
-    </>
+    </div>
   );
 }

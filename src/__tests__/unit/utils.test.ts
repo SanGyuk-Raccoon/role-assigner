@@ -1,475 +1,192 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  shuffleArray,
+  Assignment,
+  LIMITS,
+  ParticipantInput,
+  RoleInput,
+  assign,
+  codePointLength,
+  createCryptoRandomIndex,
+  createLookupKey,
   createRolePool,
-  assignGeneralRoles,
-  validateRoleConfig,
-  generateDerangement,
-  assignManitoRoles,
-  isValidManitoAssignment,
-  RoleConfig,
-  Participant,
+  fisherYates,
+  isSingleCycleManito,
+  limitDisplayInput,
+  normalizeDisplayValue,
+  sattolo,
+  utf8ByteLength,
+  validateSetup,
 } from '../../utils';
 
-// Helper to create participants
-const createParticipants = (names: string[]): Participant[] =>
-  names.map((name, i) => ({ id: String(i + 1), name, password: 'pass' }));
+const participants = (names: string[]): ParticipantInput[] =>
+  names.map((name, index) => ({ id: `p-${index}`, name }));
 
-describe('shuffleArray', () => {
-  it('returns array with same elements', () => {
-    const arr = [1, 2, 3, 4, 5];
-    const shuffled = shuffleArray(arr);
-    expect(shuffled.sort()).toEqual(arr.sort());
+const roles = (values: Array<[string, number]>): RoleInput[] =>
+  values.map(([name, count], index) => ({ id: `r-${index}`, name, count }));
+
+const zeroIndex = () => 0;
+
+describe('문자열 정규화와 제한', () => {
+  it('앞뒤 공백을 제거하고 연속된 Unicode 공백을 하나로 합친다', () => {
+    expect(normalizeDisplayValue('  김\t 철수\n님  ')).toBe('김 철수 님');
   });
 
-  it('does not modify original array', () => {
-    const arr = [1, 2, 3];
-    const original = [...arr];
-    shuffleArray(arr);
-    expect(arr).toEqual(original);
+  it('조회 키에 NFKC와 locale-independent 소문자를 적용한다', () => {
+    expect(createLookupKey('  ＡＬＩＣＥ  ')).toBe('alice');
+    expect(createLookupKey('Alice')).toBe('alice');
   });
 
-  it('handles empty array', () => {
-    expect(shuffleArray([])).toEqual([]);
-  });
-});
-
-describe('createRolePool', () => {
-  it('creates pool with exact role counts', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 2, description: '' },
-      { id: '2', name: '시민', count: 3, description: '' },
-    ];
-    const pool = createRolePool(roles, 5);
-
-    expect(pool).toHaveLength(5);
-    expect(pool!.filter(r => r === '마피아')).toHaveLength(2);
-    expect(pool!.filter(r => r === '시민')).toHaveLength(3);
+  it('Unicode code point와 UTF-8 바이트를 각각 센다', () => {
+    expect(codePointLength('가😀')).toBe(2);
+    expect(utf8ByteLength('가😀')).toBe(7);
   });
 
-  it('fills remaining spots with count=0 role', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '스파이', count: 1, description: '' },
-      { id: '2', name: '시민', count: 0, description: '' },
-    ];
-    const pool = createRolePool(roles, 5);
-
-    expect(pool).toHaveLength(5);
-    expect(pool!.filter(r => r === '스파이')).toHaveLength(1);
-    expect(pool!.filter(r => r === '시민')).toHaveLength(4);
+  it('상한 안에서는 입력 중인 공백을 그대로 보존한다', () => {
+    expect(limitDisplayInput('  김 철수  ', 20, 80)).toEqual({
+      value: '  김 철수  ',
+      exceeded: false,
+    });
   });
 
-  it('returns null when roles exceed participants', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 5, description: '' },
-    ];
-    expect(createRolePool(roles, 3)).toBeNull();
+  it('초과 입력은 정규화한 Unicode·UTF-8 유효 접두사까지만 반환한다', () => {
+    expect(limitDisplayInput(`  ${'😀'.repeat(21)}  `, 20, 80)).toEqual({
+      value: '😀'.repeat(20),
+      exceeded: true,
+    });
+    expect(limitDisplayInput('가😀A', 3, 6)).toEqual({
+      value: '가',
+      exceeded: true,
+    });
   });
 
-  it('returns null when no remaining role to fill gap', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 2, description: '' },
-    ];
-    expect(createRolePool(roles, 5)).toBeNull();
+  it('참가자 이름 20 code point·80바이트 경계를 허용하고 초과를 거부한다', () => {
+    const allowed = validateSetup('manito', participants(['😀'.repeat(20), '친구']), []);
+    const tooLong = validateSetup('manito', participants(['😀'.repeat(21), '친구']), []);
+    expect(allowed.valid).toBe(true);
+    expect(tooLong.issues.some((issue) => issue.field === 'participant:p-0')).toBe(true);
   });
 
-  it('ignores roles with empty names', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '', count: 2, description: '' },
-      { id: '2', name: '시민', count: 0, description: '' },
-    ];
-    const pool = createRolePool(roles, 3);
-
-    expect(pool).toHaveLength(3);
-    expect(pool!.every(r => r === '시민')).toBe(true);
+  it('역할 이름 30 code point·120바이트 경계를 허용하고 초과를 거부한다', () => {
+    const allowed = validateSetup('role', participants(['A', 'B']), roles([['😀'.repeat(30), 0]]));
+    const tooLong = validateSetup('role', participants(['A', 'B']), roles([['😀'.repeat(31), 0]]));
+    expect(allowed.valid).toBe(true);
+    expect(tooLong.issues.some((issue) => issue.field === 'role-name:r-0')).toBe(true);
   });
 });
 
-describe('assignGeneralRoles', () => {
-  it('assigns roles to all participants', () => {
-    const participants = createParticipants(['철수', '영희', '민수']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '늑대', count: 1, description: '' },
-      { id: '2', name: '양', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(3);
-    expect(result!.filter(r => r.role === '늑대')).toHaveLength(1);
-    expect(result!.filter(r => r.role === '양')).toHaveLength(2);
+describe('설정 검증', () => {
+  it('참가자는 2명부터 20명까지 허용한다', () => {
+    const twenty = participants(Array.from({ length: 20 }, (_, index) => `참가자 ${index}`));
+    const twentyOne = participants(Array.from({ length: 21 }, (_, index) => `참가자 ${index}`));
+    expect(validateSetup('manito', twenty, []).valid).toBe(true);
+    expect(validateSetup('manito', twentyOne, []).issues).toContainEqual({
+      field: 'participants',
+      message: '참가자는 최대 20명까지 입력할 수 있습니다.',
+    });
+    expect(validateSetup('manito', participants(['혼자']), []).valid).toBe(false);
   });
 
-  it('returns null for less than 2 participants', () => {
-    const participants = createParticipants(['혼자']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '역할', count: 0, description: '' },
-    ];
-
-    expect(assignGeneralRoles(participants, roles)).toBeNull();
+  it('빈 이름과 표시 정규화 후 중복 이름을 거부한다', () => {
+    const empty = validateSetup('manito', participants(['', '친구']), []);
+    const duplicate = validateSetup('manito', participants(['Alice', ' ＡＬＩＣＥ ']), []);
+    expect(empty.issues.some((issue) => issue.field === 'participant:p-0')).toBe(true);
+    expect(duplicate.issues.some((issue) => issue.field === 'participant:p-1')).toBe(true);
   });
 
-  it('filters out empty name participants', () => {
-    const participants: Participant[] = [
-      { id: '1', name: '철수', password: 'pass' },
-      { id: '2', name: '', password: 'pass' },
-      { id: '3', name: '   ', password: 'pass' },
-      { id: '4', name: '영희', password: 'pass' },
-    ];
-    const roles: RoleConfig[] = [
-      { id: '1', name: '시민', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(2);
-    expect(result!.map(r => r.participantName)).toEqual(['철수', '영희']);
+  it('역할은 최대 20개이며 빈 이름과 정규화 중복을 거부한다', () => {
+    const tooManyRoles = roles(Array.from({ length: 21 }, (_, index) => [`역할 ${index}`, index === 0 ? 0 : 1]));
+    expect(validateSetup('role', participants(['A', 'B']), tooManyRoles).issues).toContainEqual({
+      field: 'roles',
+      message: '역할은 최대 20개까지 입력할 수 있습니다.',
+    });
+    expect(validateSetup('role', participants(['A', 'B']), roles([['', 0]])).valid).toBe(false);
+    expect(validateSetup('role', participants(['A', 'B']), roles([['시민', 1], ['  시민 ', 1]])).valid).toBe(false);
   });
 
-  it('adds liarWord to non-liar roles', () => {
-    const participants = createParticipants(['A', 'B', 'C']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '라이어', count: 1, description: '' },
-      { id: '2', name: '시민', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles, '사과');
-
-    const liar = result!.find(r => r.role === '라이어');
-    const citizens = result!.filter(r => r.role === '시민');
-
-    expect(liar?.extra).toBeUndefined();
-    expect(citizens.every(c => c.extra === '사과')).toBe(true);
-  });
-
-  it('returns null when role count mismatches', () => {
-    const participants = createParticipants(['A', 'B', 'C']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '역할', count: 10, description: '' },
-    ];
-
-    expect(assignGeneralRoles(participants, roles)).toBeNull();
-  });
-});
-
-describe('validateRoleConfig', () => {
-  it('returns error for less than 2 participants', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '시민', count: 0, description: '' },
-    ];
-
-    const result = validateRoleConfig(roles, 1);
-
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('2명');
-  });
-
-  it('returns error when roles exceed participants', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 5, description: '' },
-    ];
-
-    const result = validateRoleConfig(roles, 3);
-
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('많습니다');
-  });
-
-  it('returns error when no remaining role to fill gap', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 2, description: '' },
-    ];
-
-    const result = validateRoleConfig(roles, 5);
-
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('나머지');
-  });
-
-  it('returns error when no valid roles exist', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '', count: 0, description: '' },
-      { id: '2', name: '   ', count: 1, description: '' },
-    ];
-
-    const result = validateRoleConfig(roles, 5);
-
-    expect(result.valid).toBe(false);
-  });
-
-  it('returns valid for proper configuration', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 2, description: '' },
-      { id: '2', name: '시민', count: 0, description: '' },
-    ];
-
-    expect(validateRoleConfig(roles, 6).valid).toBe(true);
-  });
-
-  it('returns valid when exact match without remaining', () => {
-    const roles: RoleConfig[] = [
-      { id: '1', name: '늑대', count: 1, description: '' },
-      { id: '2', name: '양', count: 2, description: '' },
-    ];
-
-    expect(validateRoleConfig(roles, 3).valid).toBe(true);
-  });
-});
-
-describe('real-world scenarios', () => {
-  it('handles 마피아 게임 scenario', () => {
-    const participants = createParticipants(['A', 'B', 'C', 'D', 'E', 'F']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '마피아', count: 2, description: '' },
-      { id: '2', name: '경찰', count: 1, description: '' },
-      { id: '3', name: '시민', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(6);
-    expect(result!.filter(r => r.role === '마피아')).toHaveLength(2);
-    expect(result!.filter(r => r.role === '경찰')).toHaveLength(1);
-    expect(result!.filter(r => r.role === '시민')).toHaveLength(3);
-  });
-
-  it('handles simple 2-team game', () => {
-    const participants = createParticipants(['1', '2', '3', '4']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: 'A팀', count: 2, description: '' },
-      { id: '2', name: 'B팀', count: 2, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(4);
-    expect(result!.filter(r => r.role === 'A팀')).toHaveLength(2);
-    expect(result!.filter(r => r.role === 'B팀')).toHaveLength(2);
-  });
-
-  it('handles unicode names correctly', () => {
-    const participants = createParticipants(['김철수', '이영희', 'John']);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '플레이어', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(3);
-    expect(result!.map(r => r.participantName).sort()).toEqual(['John', '김철수', '이영희']);
-  });
-
-  it('handles large group (20 players)', () => {
-    const names = Array.from({ length: 20 }, (_, i) => `Player${i + 1}`);
-    const participants = createParticipants(names);
-    const roles: RoleConfig[] = [
-      { id: '1', name: '스파이', count: 3, description: '' },
-      { id: '2', name: '시민', count: 0, description: '' },
-    ];
-
-    const result = assignGeneralRoles(participants, roles);
-
-    expect(result).toHaveLength(20);
-    expect(result!.filter(r => r.role === '스파이')).toHaveLength(3);
-    expect(result!.filter(r => r.role === '시민')).toHaveLength(17);
-  });
-});
-
-describe('generateDerangement (Sattolo algorithm)', () => {
-  it('returns empty array for single element', () => {
-    expect(generateDerangement([1])).toEqual([]);
-  });
-
-  it('returns empty array for empty input', () => {
-    expect(generateDerangement([])).toEqual([]);
-  });
-
-  it('creates valid derangement for 2 elements', () => {
-    const arr = ['A', 'B'];
-    const derangement = generateDerangement(arr);
-
-    expect(derangement).toHaveLength(2);
-    // For 2 elements, the only valid derangement is [1, 0]
-    expect(derangement[0]).toBe(1);
-    expect(derangement[1]).toBe(0);
-  });
-
-  it('creates valid derangement where no element maps to itself', () => {
-    const arr = ['A', 'B', 'C', 'D', 'E'];
-
-    // Run multiple times to ensure randomness works correctly
-    for (let trial = 0; trial < 20; trial++) {
-      const derangement = generateDerangement(arr);
-
-      expect(derangement).toHaveLength(arr.length);
-
-      // Check no fixed points (no element maps to itself)
-      for (let i = 0; i < arr.length; i++) {
-        expect(derangement[i]).not.toBe(i);
-      }
-
-      // Check all indices are used exactly once (valid permutation)
-      const sorted = [...derangement].sort((a, b) => a - b);
-      expect(sorted).toEqual([0, 1, 2, 3, 4]);
+  it('역할 인원은 0–20 사이 정수만 허용한다', () => {
+    for (const count of [-1, 1.5, 21, Number.NaN]) {
+      const result = validateSetup('role', participants(['A', 'B']), roles([['시민', count]]));
+      expect(result.issues.some((issue) => issue.field === 'role-count:r-0')).toBe(true);
     }
   });
 
-  it('handles large arrays', () => {
-    const arr = Array.from({ length: 100 }, (_, i) => `P${i}`);
-    const derangement = generateDerangement(arr);
+  it('0명 역할은 하나만 허용한다', () => {
+    const result = validateSetup('role', participants(['A', 'B']), roles([['시민', 0], ['마피아', 0]]));
+    expect(result.issues.some((issue) => issue.message.includes('하나만'))).toBe(true);
+  });
 
-    expect(derangement).toHaveLength(100);
+  it('양수 역할 합계의 초과와 나머지 역할 없는 부족을 거부한다', () => {
+    const over = validateSetup('role', participants(['A', 'B']), roles([['시민', 3]]));
+    const short = validateSetup('role', participants(['A', 'B', 'C']), roles([['마피아', 1], ['시민', 1]]));
+    expect(over.issues.some((issue) => issue.message.includes('많습니다'))).toBe(true);
+    expect(short.issues.some((issue) => issue.message.includes('0명'))).toBe(true);
+  });
 
-    // No fixed points
-    for (let i = 0; i < arr.length; i++) {
-      expect(derangement[i]).not.toBe(i);
-    }
+  it('0명 역할로 남은 인원을 정확히 채운다', () => {
+    expect(createRolePool([{ name: '마피아', count: 1 }, { name: '시민', count: 0 }], 4))
+      .toEqual(['마피아', '시민', '시민', '시민']);
   });
 });
 
-describe('assignManitoRoles', () => {
-  it('returns null for empty participants', () => {
-    expect(assignManitoRoles([])).toBeNull();
+describe('결정적 배정', () => {
+  it('Fisher-Yates는 원본을 바꾸지 않고 모든 값을 보존한다', () => {
+    const source = ['A', 'B', 'C', 'D'];
+    const shuffled = fisherYates(source, zeroIndex);
+    expect(source).toEqual(['A', 'B', 'C', 'D']);
+    expect([...shuffled].sort()).toEqual([...source].sort());
+    expect(shuffled).toEqual(['B', 'C', 'D', 'A']);
   });
 
-  it('returns null for single participant', () => {
-    expect(assignManitoRoles(['철수'])).toBeNull();
-  });
-
-  it('returns null when all participants have empty names', () => {
-    expect(assignManitoRoles(['', '   ', ''])).toBeNull();
-  });
-
-  it('assigns manito roles correctly for 2 participants', () => {
-    const result = assignManitoRoles(['철수', '영희']);
-
-    expect(result).toHaveLength(2);
-    expect(result![0].giver).toBe('철수');
-    expect(result![0].receiver).toBe('영희');
-    expect(result![1].giver).toBe('영희');
-    expect(result![1].receiver).toBe('철수');
-  });
-
-  it('never assigns anyone to themselves', () => {
-    const names = ['Alice', 'Bob', 'Charlie', 'David', 'Eve'];
-
-    // Run multiple times to ensure randomness is handled correctly
-    for (let trial = 0; trial < 50; trial++) {
-      const result = assignManitoRoles(names);
-
-      expect(result).toHaveLength(5);
-
-      // No self-assignment
-      for (const assignment of result!) {
-        expect(assignment.giver).not.toBe(assignment.receiver);
-      }
-    }
-  });
-
-  it('uses all participants as both givers and receivers', () => {
+  it('Sattolo는 단일 순환을 만들고 자기 자신을 배정하지 않는다', () => {
     const names = ['A', 'B', 'C', 'D'];
-    const result = assignManitoRoles(names);
-
-    const givers = result!.map(a => a.giver).sort();
-    const receivers = result!.map(a => a.receiver).sort();
-
-    expect(givers).toEqual(['A', 'B', 'C', 'D']);
-    expect(receivers).toEqual(['A', 'B', 'C', 'D']);
+    const targets = sattolo(names, zeroIndex);
+    const assignments: Assignment[] = names.map((name, index) => ({ name, role: targets[index] }));
+    expect(targets.every((target, index) => target !== names[index])).toBe(true);
+    expect(isSingleCycleManito(assignments)).toBe(true);
   });
 
-  it('filters out empty names', () => {
-    const result = assignManitoRoles(['철수', '', '영희', '   ']);
-
-    expect(result).toHaveLength(2);
-    expect(result![0].giver).toBe('철수');
-    expect(result![1].giver).toBe('영희');
+  it('일반 역할은 모든 참가자에게 역할을 정확히 한 번 배정한다', () => {
+    const result = assign('role', ['A', 'B', 'C', 'D'], [
+      { name: '마피아', count: 1 },
+      { name: '시민', count: 0 },
+    ], zeroIndex);
+    expect(result.map((item) => item.name)).toEqual(['A', 'B', 'C', 'D']);
+    expect(result.filter((item) => item.role === '마피아')).toHaveLength(1);
+    expect(result.filter((item) => item.role === '시민')).toHaveLength(3);
   });
 
-  it('handles Korean names correctly', () => {
-    const names = ['김철수', '이영희', '박민수', '최지영'];
-    const result = assignManitoRoles(names);
-
-    expect(result).toHaveLength(4);
-    expect(isValidManitoAssignment(result!)).toBe(true);
+  it('마니또는 20명도 중복·자기 배정 없이 단일 순환으로 배정한다', () => {
+    const names = Array.from({ length: LIMITS.maxParticipants }, (_, index) => `P${index}`);
+    const result = assign('manito', names, [], zeroIndex);
+    expect(new Set(result.map((item) => item.name)).size).toBe(names.length);
+    expect(new Set(result.map((item) => item.role)).size).toBe(names.length);
+    expect(result.every((item) => item.name !== item.role)).toBe(true);
+    expect(isSingleCycleManito(result)).toBe(true);
   });
 
-  it('handles large group (20 people)', () => {
-    const names = Array.from({ length: 20 }, (_, i) => `Player${i + 1}`);
-    const result = assignManitoRoles(names);
-
-    expect(result).toHaveLength(20);
-    expect(isValidManitoAssignment(result!)).toBe(true);
-
-    // Verify everyone receives exactly one gift
-    const receiversCount = new Map<string, number>();
-    for (const a of result!) {
-      receiversCount.set(a.receiver, (receiversCount.get(a.receiver) || 0) + 1);
-    }
-    for (const count of receiversCount.values()) {
-      expect(count).toBe(1);
-    }
+  it('주입한 난수 인덱스 범위를 검사한다', () => {
+    expect(() => fisherYates([1, 2], () => 2)).toThrow(RangeError);
   });
 });
 
-describe('isValidManitoAssignment', () => {
-  it('returns true for valid assignment', () => {
-    const assignment = [
-      { giver: 'A', receiver: 'B' },
-      { giver: 'B', receiver: 'C' },
-      { giver: 'C', receiver: 'A' },
-    ];
-    expect(isValidManitoAssignment(assignment)).toBe(true);
+describe('Web Crypto 난수 어댑터', () => {
+  it('Web Crypto가 없으면 Math.random으로 대체하지 않는다', () => {
+    const randomSpy = vi.spyOn(Math, 'random');
+    expect(() => createCryptoRandomIndex(null as unknown as undefined)).toThrow('안전한 역할 섞기');
+    expect(randomSpy).not.toHaveBeenCalled();
+    randomSpy.mockRestore();
   });
 
-  it('returns false when someone is assigned to themselves', () => {
-    const assignment = [
-      { giver: 'A', receiver: 'A' },  // Invalid!
-      { giver: 'B', receiver: 'C' },
-      { giver: 'C', receiver: 'B' },
-    ];
-    expect(isValidManitoAssignment(assignment)).toBe(false);
-  });
-
-  it('returns true for empty array', () => {
-    expect(isValidManitoAssignment([])).toBe(true);
-  });
-});
-
-describe('마니또 real-world scenarios', () => {
-  it('typical office secret santa (10 people)', () => {
-    const names = ['김대리', '이과장', '박부장', '최사원', '정인턴',
-                   '강대리', '조과장', '윤부장', '임사원', '한인턴'];
-
-    const result = assignManitoRoles(names);
-
-    expect(result).toHaveLength(10);
-    expect(isValidManitoAssignment(result!)).toBe(true);
-
-    // Everyone gives and receives exactly one
-    const givers = new Set(result!.map(a => a.giver));
-    const receivers = new Set(result!.map(a => a.receiver));
-    expect(givers.size).toBe(10);
-    expect(receivers.size).toBe(10);
-  });
-
-  it('friend group manito (5 people)', () => {
-    const friends = ['민수', '영희', '철수', '지영', '현우'];
-
-    // Test multiple times for randomness
-    for (let i = 0; i < 10; i++) {
-      const result = assignManitoRoles(friends);
-
-      expect(result).toHaveLength(5);
-      expect(isValidManitoAssignment(result!)).toBe(true);
-    }
-  });
-
-  it('minimum viable manito (2 people)', () => {
-    const result = assignManitoRoles(['A', 'B']);
-
-    expect(result).toHaveLength(2);
-    // Only one possible valid assignment for 2 people
-    expect(result![0]).toEqual({ giver: 'A', receiver: 'B' });
-    expect(result![1]).toEqual({ giver: 'B', receiver: 'A' });
+  it('편향을 피하기 위해 허용 범위 밖 Uint32 값을 다시 뽑는다', () => {
+    const values = [0xffff_ffff, 5];
+    const cryptoSource = {
+      getRandomValues(array: Uint32Array) {
+        array[0] = values.shift() ?? 0;
+        return array;
+      },
+    } as unknown as Pick<Crypto, 'getRandomValues'>;
+    const randomIndex = createCryptoRandomIndex(cryptoSource);
+    expect(randomIndex(3)).toBe(2);
+    expect(values).toHaveLength(0);
   });
 });
