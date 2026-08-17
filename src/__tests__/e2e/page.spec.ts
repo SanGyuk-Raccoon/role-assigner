@@ -40,6 +40,11 @@ test.describe('브라우저 전용 배정 흐름', () => {
     });
   });
 
+  test('전역 레이아웃은 DarakBox 복귀 링크를 노출하지 않는다', async ({ page }) => {
+    await openSetup(page);
+    await expect(page.getByRole('link', { name: 'DARAKBOX' })).toHaveCount(0);
+  });
+
   test('설정 화면은 20명 제한·마니또 전환을 제공하고 상시 글자 수를 숨긴다', async ({ page }) => {
     await openSetup(page);
     await expect(page.getByRole('radio', { name: '전체 공개' })).toHaveAttribute('aria-checked', 'true');
