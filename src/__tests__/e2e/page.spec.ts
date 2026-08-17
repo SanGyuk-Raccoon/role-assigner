@@ -177,6 +177,10 @@ test.describe('브라우저 전용 배정 흐름', () => {
   test('전체 공개는 결과를 바로 표시하고 복사한 링크도 모든 결과를 즉시 연다', async ({ page, context }) => {
     await assignGeneralRoles(page, ['Alice', '철수'], '시민', 'public');
     await expect(page.locator('.ra-public-results-grid')).toBeVisible();
+    const publicAvatars = page.locator('.ra-public-results-grid .ra-avatar');
+    await expect(publicAvatars).toHaveCount(2);
+    await expect(publicAvatars.locator('.ra-avatar-icon')).toHaveCount(2);
+    await expect(publicAvatars.first()).toHaveText('');
     await expect(page.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(page.locator('.ra-participant-result-row')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '결과 링크 복사' })).toBeVisible();
@@ -186,6 +190,10 @@ test.describe('브라우저 전용 배정 흐름', () => {
     const receiver = await context.newPage();
     await receiver.goto(url);
     await expect(receiver.getByRole('heading', { name: '역할 전체 결과' })).toBeVisible();
+    const linkedAvatars = receiver.locator('.ra-public-results-grid .ra-avatar');
+    await expect(linkedAvatars).toHaveCount(2);
+    await expect(linkedAvatars.locator('.ra-avatar-icon')).toHaveCount(2);
+    await expect(linkedAvatars.first()).toHaveText('');
     await expect(receiver.getByText('시민', { exact: true })).toHaveCount(2);
     await expect(receiver.getByLabel('참가자 이름')).toHaveCount(0);
     await expectResultOnlyCopy(receiver);
@@ -211,6 +219,11 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await assignGeneralRoles(page);
     await expect(page.getByText('시민', { exact: true })).toHaveCount(0);
     await expectResultOnlyCopy(page);
+
+    const participantAvatars = page.locator('.ra-participant-result-row .ra-avatar');
+    await expect(participantAvatars).toHaveCount(2);
+    await expect(participantAvatars.locator('.ra-avatar-icon')).toHaveCount(2);
+    await expect(participantAvatars.first()).toHaveText('');
 
     const aliceRow = page.locator('.ra-participant-result-row').filter({ hasText: 'Alice' });
     const otherRow = page.locator('.ra-participant-result-row').filter({ hasText: '철수' });

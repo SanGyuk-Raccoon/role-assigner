@@ -103,7 +103,32 @@ function resultLabel(mode: AssignmentMode): string {
   return mode === 'manito' ? '마니또' : '역할';
 }
 
+function ParticipantAvatar({ size = 'default' }: { size?: 'compact' | 'default' | 'list' }) {
+  const avatarSize = size === 'compact' ? 'h-8 w-8' : size === 'list' ? 'h-11 w-11' : 'h-10 w-10';
+  const iconSize = size === 'compact' ? 'h-4 w-4' : 'h-5 w-5';
+
+  return (
+    <span className={`ra-avatar ${avatarSize}`} aria-hidden="true">
+      <svg
+        className={`ra-avatar-icon ${iconSize}`}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        focusable="false"
+      >
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5.5 20c.6-3.4 3.1-5.5 6.5-5.5s5.9 2.1 6.5 5.5" />
+      </svg>
+    </span>
+  );
+}
+
 function PublicResultsGrid({ assignments, label }: { assignments: Assignment[]; label: string }) {
+  const compact = assignments.length > 4;
+
   return (
     <section className={`ra-public-results-grid mb-8 grid gap-3 ${
       assignments.length <= 4
@@ -119,16 +144,14 @@ function PublicResultsGrid({ assignments, label }: { assignments: Assignment[]; 
           style={{ animationDelay: `${index * 0.08}s` }}
         >
           <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 via-purple-500/20 to-cyan-500/20" />
-          <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${assignments.length > 4 ? 'p-3' : 'p-4'}`}>
+          <div className={`relative rounded-2xl border border-white/10 bg-slate-800/90 backdrop-blur-sm ${compact ? 'p-3' : 'p-4'}`}>
             <div className="mb-2 flex min-w-0 items-center gap-3">
-              <span className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-600 font-bold text-white shadow-lg shadow-pink-500/30 ${assignments.length > 4 ? 'h-8 w-8 text-sm' : 'h-10 w-10 text-base'}`} aria-hidden="true">
-                {[...assignment.name][0]?.toUpperCase() ?? '?'}
-              </span>
-              <h2 className={`min-w-0 break-words font-bold text-white ${assignments.length > 4 ? 'text-sm' : 'text-base'}`}>
+              <ParticipantAvatar size={compact ? 'compact' : 'default'} />
+              <h2 className={`min-w-0 break-words font-bold text-white ${compact ? 'text-sm' : 'text-base'}`}>
                 {assignment.name}
               </h2>
             </div>
-            <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${assignments.length > 4 ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
+            <p className={`break-words rounded-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-center font-black text-white shadow-lg shadow-orange-500/30 ${compact ? 'px-3 py-1.5 text-sm' : 'px-4 py-2 text-base'}`}>
               <span className="sr-only">{label}: </span>
               <span>{assignment.role}</span>
             </p>
@@ -846,9 +869,7 @@ export default function RoleAssigner() {
               return (
                 <li key={participantKey} className="ra-participant-result-row">
                   <div className="ra-participant-identity">
-                    <span className="ra-avatar" aria-hidden="true">
-                      {[...assignment.name][0]?.toUpperCase() ?? '?'}
-                    </span>
+                    <ParticipantAvatar size="list" />
                     <div className="min-w-0" aria-live="polite">
                       <span className="break-words font-black text-white">{assignment.name}</span>
                       {participantRevealed && (
