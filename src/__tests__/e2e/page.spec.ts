@@ -48,9 +48,26 @@ test.describe('브라우저 전용 배정 흐름', () => {
     await expect(page.getByText(/남은 \d+자|\d+\/80B/u)).toHaveCount(0);
 
     const manitoToggle = page.getByRole('switch', { name: '마니또 모드' });
+    const manitoTrack = manitoToggle.locator('span[aria-hidden="true"]').last();
+    const manitoThumb = manitoTrack.locator('span');
+    const thumbOffsets = async () => {
+      const [trackBox, thumbBox] = await Promise.all([
+        manitoTrack.boundingBox(),
+        manitoThumb.boundingBox(),
+      ]);
+
+      if (!trackBox || !thumbBox) return null;
+      return {
+        left: Math.round(thumbBox.x - trackBox.x),
+        right: Math.round(trackBox.x + trackBox.width - thumbBox.x - thumbBox.width),
+      };
+    };
+
     await expect(manitoToggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(thumbOffsets).toEqual({ left: 2, right: 26 });
     await manitoToggle.click();
     await expect(manitoToggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(thumbOffsets).toEqual({ left: 26, right: 2 });
     await expect(page.getByText(/자기 자신은 배정되지 않습니다/u)).toBeVisible();
     await expect(page.getByLabel('역할 1', { exact: true })).toHaveCount(0);
 

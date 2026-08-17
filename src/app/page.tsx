@@ -1221,8 +1221,8 @@ export default function RoleAssigner() {
                     mode === 'manito' ? 'bg-gradient-to-r from-pink-500 to-purple-500' : 'bg-slate-600'
                   }`} aria-hidden="true">
                     <span
-                      className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
-                        mode === 'manito' ? 'translate-x-6' : 'translate-x-0.5'
+                      className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                        mode === 'manito' ? 'translate-x-6' : 'translate-x-0'
                       }`}
                     />
                   </span>
